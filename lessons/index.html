@@ -1,0 +1,49 @@
+<meta charset="utf-8">
+<title>Go 코스 인덱스</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">learn-go · Course Index</p>
+  <h1>Go 코스 인덱스</h1>
+  <p class="lede">미션: 미디어 서버 생태계(Pion, MediaMTX, LiveKit)의 Go 코드를 읽고·수정하고·PR을 통과시키는 실무 수준까지. 하루 1시간, 레슨 하나씩.</p>
+
+  <h2>기초 아크 — 언어 자체 (0001–0007)</h2>
+  <table>
+    <tr><th>레슨</th><th>주제</th><th>실습</th></tr>
+    <tr><td><a href="0001-first-go-program.html">0001</a></td><td>첫 Go 프로그램 — 해부도, go run/build, gofmt</td><td>hello</td></tr>
+    <tr><td><a href="0002-variables-types-functions.html">0002</a></td><td>변수·타입·함수 — zero value, 명시적 변환, 다중 반환</td><td>HLS 세그먼트 계산기</td></tr>
+    <tr><td><a href="0003-error-handling.html">0003</a></td><td>에러 처리 — (값, error), %w 래핑, errors.Is, defer</td><td>해상도 파서</td></tr>
+    <tr><td><a href="0004-slices-and-maps.html">0004</a></td><td>슬라이스·맵·for range</td><td>비트레이트 통계</td></tr>
+    <tr><td><a href="0005-structs-and-methods.html">0005</a></td><td>구조체·메서드·포인터 — 리시버 선택, NewX 관례</td><td>Stream 상태 머신</td></tr>
+    <tr><td><a href="0006-interfaces.html">0006</a></td><td>인터페이스 — 암묵적 구현, io.Reader/Writer, 타입 단언</td><td>Publisher 다형성</td></tr>
+    <tr><td><a href="0007-goroutines-and-channels.html">0007</a></td><td>고루틴·채널·WaitGroup — 동시성 입문</td><td>병렬 트랜스코딩</td></tr>
+  </table>
+
+  <h2>실전 아크 — 실무 도구 (0008–0012)</h2>
+  <table>
+    <tr><th>레슨</th><th>주제</th><th>실습</th></tr>
+    <tr><td><a href="0008-packages-and-layout.html">0008</a></td><td>패키지와 프로젝트 구조 — cmd/, internal/, import 경로</td><td>mediakit 모듈</td></tr>
+    <tr><td><a href="0009-testing.html">0009</a></td><td>테스트 — 테이블 드리븐, t.Run, 커버리지</td><td>segment 패키지 테스트</td></tr>
+    <tr><td><a href="0010-http-server.html">0010</a></td><td>net/http — 패턴 라우팅, JSON, 에러 응답</td><td>스트림 API</td></tr>
+    <tr><td><a href="0011-select-and-context.html">0011</a></td><td>select와 context — 타임아웃, 취소 전파</td><td>취소 가능한 파이프라인</td></tr>
+    <tr><td><a href="0012-mutex-and-race.html">0012</a></td><td>공유 상태와 레이스 — Mutex, -race 디텍터</td><td>레이스 재현→검출→수리</td></tr>
+  </table>
+
+  <h2>종합 — 캡스톤과 실코드 (0013–0014)</h2>
+  <table>
+    <tr><th>레슨</th><th>주제</th><th>실습</th></tr>
+    <tr><td><a href="0013-capstone-stream-gateway.html">0013</a></td><td>캡스톤 — 미니 스트림 게이트웨이 (0002~0012 종합)</td><td>gateway 프로젝트</td></tr>
+    <tr><td><a href="0014-reading-mediamtx.html">0014</a></td><td>실코드 읽기 — 코드 리딩 방법론 + mediamtx 투어</td><td>RTMP 경로 추적</td></tr>
+  </table>
+
+  <h2>레퍼런스 (빠른 참조·인쇄용)</h2>
+  <ul>
+    <li><a href="../reference/glossary.html">용어집</a> — 모든 레슨의 확정 어휘</li>
+    <li><a href="../reference/go-toolchain-cheatsheet.html">툴체인</a> · <a href="../reference/syntax-basics.html">문법 기초</a> · <a href="../reference/errors-cheatsheet.html">에러 처리</a> · <a href="../reference/slices-maps-cheatsheet.html">슬라이스·맵</a> · <a href="../reference/structs-methods-cheatsheet.html">구조체·메서드</a> · <a href="../reference/interfaces-cheatsheet.html">인터페이스</a> · <a href="../reference/concurrency-cheatsheet.html">동시성</a></li>
+    <li><a href="../reference/project-layout-cheatsheet.html">프로젝트 구조</a> · <a href="../reference/testing-cheatsheet.html">테스트</a> · <a href="../reference/http-json-cheatsheet.html">HTTP·JSON</a> · <a href="../reference/select-context-cheatsheet.html">select·context</a> · <a href="../reference/sync-race-cheatsheet.html">sync·race</a> · <a href="../reference/capstone-checklist.html">캡스톤 채점표</a> · <a href="../reference/code-reading-playbook.html">코드 리딩 플레이북</a></li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>진행 규칙: 하루 1시간, 순서대로. 각 레슨 퀴즈의 첫 문항은 직전 레슨 복습이다. 막히면 워크스페이스에서 Claude에게 질문 — 퀴즈 오답과 막힌 지점이 다음 커리큘럼 설계의 입력이 된다.</p>
+    <p>커리큘럼 완주 후: 회사 Go 코드베이스 PR + <a href="https://go.dev/wiki/Questions">Go 커뮤니티</a>에서 위즈덤 구간 시작.</p>
+  </footer>
+</main>

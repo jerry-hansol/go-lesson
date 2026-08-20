@@ -1,0 +1,195 @@
+<meta charset="utf-8">
+<title>레슨 0006 — 인터페이스</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0006 · Go 기초</p>
+  <h1>인터페이스 — implements 없는 다형성</h1>
+  <p class="lede">MediaMTX와 LiveKit 코드를 읽다 보면 온통 인터페이스다. Go 인터페이스는 Java와 문법이 아니라 <em>철학</em>이 다르다 — 선언이 아니라 구조로 만족한다. 예상 소요: 35–40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p><code>Publisher</code> 인터페이스 하나에 구현 두 개를 갈아끼우는 코드를 직접 작성하고, Java와 다른 지점 세 곳(암묵적 구현, 작은 인터페이스, 타입 단언)을 설명할 수 있다.</p>
+  </div>
+
+  <h2>1. 암묵적 구현 — implements가 없다</h2>
+  <p>Java에서는 <code>class LogPublisher implements Publisher</code>라고 <em>선언</em>해야 구현이다. Go에서는 <strong>인터페이스가 요구하는 메서드를 전부 갖추면 그걸로 끝</strong>이다. 선언 없음, import조차 필요 없음 (<a href="https://gobyexample.com/interfaces">Go by Example: Interfaces</a>):</p>
+  <pre><code>type Publisher interface {
+    Publish(data string) error
+}
+
+type LogPublisher struct{ Prefix string }
+
+// 이 메서드가 존재하는 순간 LogPublisher는 Publisher다. 선언 불필요.
+func (p LogPublisher) Publish(data string) error {
+    fmt.Println(p.Prefix, data)
+    return nil
+}</code></pre>
+  <p>이게 왜 강력한가: <strong>인터페이스를 사용하는 쪽이 정의할 수 있다</strong>. 남의 패키지 타입도, 내가 만든 인터페이스의 메서드 셋만 맞으면 그대로 받아 쓸 수 있다 — Java라면 어댑터 클래스를 만들어야 하는 상황이다.</p>
+
+  <h2>2. 작은 인터페이스 — 메서드 1개가 표준이다</h2>
+  <p>Java 인터페이스는 메서드 수십 개짜리가 흔하지만, Go 표준 라이브러리의 근간은 <strong>메서드 1개짜리</strong>다 (<a href="https://pkg.go.dev/io#Reader">io.Reader</a> / <a href="https://pkg.go.dev/io#Writer">io.Writer</a>):</p>
+  <pre><code>type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+type Writer interface {
+    Write(p []byte) (n int, err error)
+}</code></pre>
+  <p>파일, 네트워크 소켓, HTTP 바디, 압축 스트림이 전부 이 두 개로 통한다. <strong>미디어 서버는 본질적으로 Reader→Writer 파이프라인</strong>이다 — RTMP 소켓에서 읽어(<code>Read</code>) 세그먼트 파일에 쓰는(<code>Write</code>) 코드가 MediaMTX 전체를 관통한다. 이 두 인터페이스가 눈에 익으면 미디어 서버 코드의 절반은 읽힌다.</p>
+
+  <h2>3. fmt.Stringer — Go의 toString()</h2>
+  <p><code>String() string</code> 메서드를 붙이면 <code>fmt.Println</code>이 그 출력을 쓴다. Java의 <code>toString()</code> 재정의와 같은 역할인데, 이것도 <em>암묵적 구현</em>의 사례다 — <code>fmt</code> 패키지가 정의한 <code>Stringer</code> 인터페이스를 내 타입이 저절로 만족하는 것 (<a href="https://gobyexample.com/string-formatting">Go by Example: String Formatting</a>):</p>
+  <pre><code>func (s Stream) String() string {
+    return fmt.Sprintf("[%s] %s %dkbps", state, s.Name, s.BitrateKbps)
+}</code></pre>
+
+  <h2>4. 타입 단언 — instanceof의 대응물</h2>
+  <p>인터페이스 값에서 구체 타입을 꺼낼 때는 <code>v, ok := i.(T)</code>. Java의 <code>instanceof</code> 검사 + 캐스팅이 한 줄로 합쳐진 형태다:</p>
+  <pre><code>lp, ok := p.(LogPublisher)   // 맞으면 ok=true, lp에 구체 값
+cp, ok := p.(*CountPublisher) // 틀리면 ok=false, cp는 zero value(nil)
+bad := p.(*CountPublisher)   // ok 없이 쓰면 — 실패 시 panic!</code></pre>
+  <p><code>, ok</code>가 있는 형태가 레슨 0002의 다중 반환 패턴 그대로라는 점에 주목. 실무에서는 거의 항상 <code>, ok</code> 형태를 쓴다.</p>
+
+  <h2>5. 실습 — Publisher 갈아끼우기</h2>
+  <ol class="steps">
+    <li><code>playground/interfaces</code> 디렉토리를 만들고 <code>go mod init interfaces</code> 후 <code>main.go</code> 작성:
+      <pre><code>package main
+
+import "fmt"
+
+// Publisher는 메시지를 내보내는 대상 — 구현이 무엇이든 상관하지 않는다.
+type Publisher interface {
+	Publish(data string) error
+}
+
+// LogPublisher는 받은 메시지를 표준 출력에 찍는다.
+type LogPublisher struct {
+	Prefix string
+}
+
+func (p LogPublisher) Publish(data string) error {
+	fmt.Println(p.Prefix, data)
+	return nil
+}
+
+// CountPublisher는 발행 횟수만 센다 — 테스트 더블의 원형.
+type CountPublisher struct {
+	Count int
+}
+
+func (p *CountPublisher) Publish(data string) error {
+	p.Count++
+	return nil
+}
+
+// broadcast는 Publisher가 구체적으로 무엇인지 모른 채 메시지를 내보낸다.
+func broadcast(p Publisher, msgs []string) {
+	for _, m := range msgs {
+		if err := p.Publish(m); err != nil {
+			fmt.Println("발행 실패:", err)
+		}
+	}
+}
+
+// Stream은 fmt.Stringer를 구현한다 — String() 하나면 Println 출력이 바뀐다.
+type Stream struct {
+	Name        string
+	BitrateKbps int
+	Live        bool
+}
+
+func (s Stream) String() string {
+	state := "종료"
+	if s.Live {
+		state = "LIVE"
+	}
+	return fmt.Sprintf("[%s] %s %dkbps", state, s.Name, s.BitrateKbps)
+}
+
+func main() {
+	msgs := []string{"segment-001.ts", "segment-002.ts", "segment-003.ts"}
+
+	log := LogPublisher{Prefix: "publish:"}
+	broadcast(log, msgs)
+
+	counter := &CountPublisher{}
+	broadcast(counter, msgs)
+	fmt.Println("발행 횟수:", counter.Count)
+
+	s := Stream{Name: "ebay-live-42", BitrateKbps: 2500, Live: true}
+	fmt.Println(s)
+}</code></pre>
+      <p class="expect">예상 출력:</p>
+      <pre><code>publish: segment-001.ts
+publish: segment-002.ts
+publish: segment-003.ts
+발행 횟수: 3
+[LIVE] ebay-live-42 2500kbps</code></pre>
+      <p class="expect">같은 <code>broadcast</code> 함수에 <code>LogPublisher</code>와 <code>&amp;CountPublisher{}</code>가 모두 들어간다 — 이게 다형성이다. <code>CountPublisher</code>가 <em>포인터</em>로 전달되는 이유는 레슨 0005 그대로: <code>Count</code>를 변경해야 하니 포인터 리시버이고, 포인터 리시버 메서드는 <code>*CountPublisher</code>만 갖는다.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 컴파일러와 panic이 하는 말 읽기</h3>
+  <ol class="steps">
+    <li><code>LogPublisher</code>의 메서드 시그니처를 <code>Publish(data []byte) error</code>로 바꾸고 <code>go run .</code>
+      <p class="expect">예상:</p>
+      <pre><code>cannot use log (variable of struct type LogPublisher) as Publisher value
+  in argument to broadcast: LogPublisher does not implement Publisher
+  (wrong type for method Publish)
+		have Publish([]byte) error
+		want Publish(string) error</code></pre>
+      <p class="expect"><code>have</code>/<code>want</code> 두 줄이 핵심이다 — 암묵적 구현이라 "선언이 빠졌다"가 아니라 "메서드 셋이 안 맞는다"고 말한다. 실무에서 자주 만날 에러이니 형태를 눈에 익혀두자. 확인 후 원상복구.</p></li>
+    <li><code>main</code> 끝에 다음을 추가하고 실행:
+      <pre><code>var p Publisher = LogPublisher{Prefix: "&gt;"}
+cp, ok := p.(*CountPublisher)
+fmt.Println("CountPublisher?", ok, cp)
+
+bad := p.(*CountPublisher) // ok 없는 단언
+fmt.Println(bad)</code></pre>
+      <p class="expect">예상: <code>, ok</code> 형태는 <code>CountPublisher? false &lt;nil&gt;</code>로 조용히 알려주지만, ok 없는 단언은 즉시 죽는다:</p>
+      <pre><code>panic: interface conversion: main.Publisher is main.LogPublisher, not *main.CountPublisher</code></pre>
+      <p class="expect">런타임 panic의 생김새를 처음 보는 순간이다 — Java의 ClassCastException 스택트레이스에 해당한다. 확인 후 추가분 삭제하고 <code>go fmt ./...</code>.</p></li>
+  </ol>
+
+  <h2>6. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0005 복습이다 (간격 반복).</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://gobyexample.com/interfaces">Go by Example: Interfaces</a> (약 5분) → 여유가 되면 <a href="https://go.dev/doc/effective_go#interfaces_and_types">Effective Go — Interfaces</a>. 특히 후자의 "인터페이스는 사용하는 쪽에 둔다"는 관례는 회사 Go 코드 리뷰에서 반복해 만나게 된다.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "Java 어댑터 패턴은 Go에서 어떻게 하나?" 같은 번역 질문 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/interfaces-cheatsheet.html">인터페이스 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0005-structs-and-methods.html">레슨 0005</a> · 다음: <a href="0007-goroutines-and-channels.html">레슨 0007</a></p>
+    <p>다음 레슨 예고: 고루틴과 채널 — Go가 미디어 서버 언어가 된 진짜 이유.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) 메서드가 리시버의 필드를 변경해야 할 때 쓰는 것은?",
+      choices: ["값 리시버 (s Stream)를 쓴다", "포인터 리시버 (s *Stream)를 쓴다", "정적 메서드로 선언해서 처리한다", "리시버를 복사한 값을 반환한다"],
+      answer: 1,
+      explain: "값 리시버는 복사본을 받으므로 변경이 호출자에게 보이지 않는다. 변경이 필요하면 포인터 리시버 — 실습의 CountPublisher가 그 예다."
+    },
+    {
+      q: "Go에서 어떤 타입이 인터페이스를 구현하는 방법은?",
+      choices: ["implements 키워드로 선언한다", "인터페이스를 상속받아 재정의한다", "리플렉션으로 등록해 연결해 둔다", "요구되는 메서드들을 전부 갖춘다"],
+      answer: 3,
+      explain: "메서드 셋만 맞으면 자동으로 구현이다(암묵적 구현). 선언이 없어서, 인터페이스를 사용하는 쪽이 나중에 정의해도 기존 타입이 그대로 만족할 수 있다."
+    },
+    {
+      q: "fmt.Println이 내 구조체를 원하는 형식으로 찍게 하려면?",
+      choices: ["String() string 메서드를 붙인다", "toString() 메서드를 재정의한다", "Format 태그를 필드마다 붙여준다", "반드시 Printf(\"%s\")로 출력한다"],
+      answer: 0,
+      explain: "String() string을 갖추면 fmt.Stringer를 암묵적으로 구현하게 되고, fmt 계열 함수들이 그 출력을 사용한다. Java toString()의 대응물."
+    },
+    {
+      q: "타입 단언 v, ok := i.(T)가 실패하면 어떻게 되나?",
+      choices: ["프로그램이 그 즉시 panic이 난다", "컴파일하는 단계에서 에러가 난다", "ok는 false, v는 zero value가 된다", "v에 자동 변환된 값이 들어가진다"],
+      answer: 2,
+      explain: ", ok 형태는 실패를 값으로 알려준다. panic이 나는 건 ok 없이 단언했을 때다 — 부숴보기에서 본 interface conversion panic."
+    }
+  ]);
+</script>

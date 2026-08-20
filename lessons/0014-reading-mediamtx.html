@@ -1,0 +1,160 @@
+<meta charset="utf-8">
+<title>레슨 0014 — 실코드 읽기: mediamtx 투어</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0014 · Go 실전 · 코드 리딩</p>
+  <h1>실코드 읽기 — mediamtx 투어</h1>
+  <p class="lede">미션의 도착점이다: "미디어 서버 프로젝트를 열어 구조를 파악할 수 있다." 오늘 진짜 프로덕션 미디어 서버(<a href="https://github.com/bluenviron/mediamtx">bluenviron/mediamtx</a>)를 클론해서 그걸 한다. 예상 소요: 60분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>mediamtx에서 진입점 → 디렉토리 지도 → 핵심 인터페이스 → RTMP publish 경로의 입구까지, <a href="../reference/code-reading-playbook.html">코드 리딩 플레이북</a> 5단계를 스스로 실행한다.</p>
+  </div>
+
+  <h2>1. 방법론 — 다 읽으려 하지 않는다</h2>
+  <p>낯선 코드베이스는 정독의 대상이 아니라 <em>지도 그리기</em>의 대상이다. 절차는 다섯 단계 — 상세는 <a href="../reference/code-reading-playbook.html">플레이북</a>에 있고, 오늘은 이걸 실전에 적용한다:</p>
+  <p><strong>① 진입점</strong>(<a href="0001-first-go-program.html">0001</a>) → <strong>② 디렉토리 지도</strong>(<a href="0008-packages-and-layout.html">0008</a>) → <strong>③ 인터페이스가 경계</strong>(<a href="0006-interfaces.html">0006</a>) → <strong>④ 데이터의 여정 하나</strong>(<a href="0007-goroutines-and-channels.html">0007</a>) → <strong>⑤ 테스트가 사용 설명서</strong>(<a href="0009-testing.html">0009</a>)</p>
+
+  <h2>2. 투어 준비</h2>
+  <ol class="steps">
+    <li>클론:
+      <pre><code>cd ~/Desktop/repo/learn-go/playground
+git clone --depth 1 https://github.com/bluenviron/mediamtx
+cd mediamtx</code></pre>
+      <p class="expect">이 투어는 <strong>2026-08-19의 main 브랜치 (커밋 <code>9934156</code>, v1.20.1 직후)</strong> 기준이다. 구조는 바뀔 수 있다 — 다르면 그게 바로 grep 연습 기회다.</p></li>
+    <li>신원 확인: <code>head -3 go.mod</code>
+      <p class="expect">예상: 모듈 <code>github.com/bluenviron/mediamtx</code>, <code>go 1.26.0</code> — 여러분 로컬과 같은 Go 버전이다.</p></li>
+  </ol>
+
+  <h2>3. ① 진입점 — main.go 전문 (15줄이 전부다)</h2>
+  <pre><code>// main executable.
+package main
+
+import (
+	"os"
+
+	"github.com/bluenviron/mediamtx/internal/core"
+)
+
+func main() {
+	s, ok := core.New(os.Args[1:])
+	if !ok {
+		os.Exit(1)
+	}
+	s.Wait()
+}</code></pre>
+  <p>프로덕션 미디어 서버의 main이 이게 전부다. 배운 게 다 보인다 — <code>ok</code> 불리언 반환(레슨 0002), 조립은 <code>internal/core</code>에 위임. 그리고 <code>s.Wait()</code>의 실제 구현(<code>internal/core/core.go:299</code>)은:</p>
+  <pre><code>func (p *Core) Wait() {
+	&lt;-p.done
+}</code></pre>
+  <p>레슨 <a href="0007-goroutines-and-channels.html">0007</a>의 채널 수신 한 줄이 서버 전체의 수명을 지탱한다. main 고루틴은 여기 블록되고, 종료 신호가 <code>done</code> 채널로 올 때까지 모든 일은 다른 고루틴들이 한다.</p>
+
+  <h2>4. ② 디렉토리 지도</h2>
+  <pre><code>mediamtx/
+├── main.go            ← 방금 봤다
+├── go.mod / go.sum
+├── mediamtx.yml       ← 기본 설정 파일
+├── api/               ← OpenAPI 명세
+├── docs/              ← 문서
+└── internal/          ← 본체 전부 (외부 import 금지 구역)
+    ├── core/          ← 조립실: Core struct가 모든 서버를 초기화·소유
+    ├── servers/       ← 프로토콜별 서버: rtmp, rtsp, hls, webrtc, srt, moq
+    ├── stream/        ← 스트림 데이터 경로 (미디어가 흐르는 곳)
+    ├── defs/          ← 공유 인터페이스·타입 정의 (Publisher, Reader, Path...)
+    ├── conf/          ← 설정 파싱·검증
+    ├── auth/          ← 인증
+    ├── logger/        ← 로깅
+    ├── protocols/     ← 프로토콜 유틸
+    ├── staticsources/ ← 카메라 등 고정 소스 pull
+    ├── recorder/ + playback/ ← 녹화와 재생
+    └── ...            ← metrics, pprof, externalcmd 등</code></pre>
+  <p><code>ls internal/servers/</code>를 직접 실행해 보라 — 프로토콜 하나가 패키지 하나, 회사에서 다루는 SRT·WebRTC가 각각 어디 사는지 바로 보인다.</p>
+
+  <h2>5. ③ 인터페이스가 경계다</h2>
+  <p><code>grep -rn "interface {" internal/defs/</code>를 실행하면 이 서버의 등장인물 목록이 나온다. 그중 <code>internal/defs/publisher.go</code> 전문:</p>
+  <pre><code>package defs
+
+// Publisher is an entity that can publish a stream.
+type Publisher interface {
+	Source
+	Close()
+}</code></pre>
+  <p>레슨 <a href="0006-interfaces.html">0006</a>에서 여러분이 만든 것과 같은 이름의 인터페이스가 실물로 있다. 새 문법 하나: 인터페이스 안에 <code>Source</code>처럼 다른 인터페이스 이름을 쓰면 그 메서드 셋을 통째로 포함한다(<strong>인터페이스 임베딩</strong> — Java의 인터페이스 <code>extends</code>에 대응).</p>
+  <p>더 중요한 발견은 <code>internal/servers/rtmp/server.go:65</code>다:</p>
+  <pre><code>type serverPathManager interface {
+	FindPathConf(req defs.PathFindPathConfReq) (*defs.PathFindPathConfRes, error)
+	AddPublisher(req defs.PathAddPublisherReq) (*defs.PathAddPublisherRes, error)
+	AddReader(req defs.PathAddReaderReq) (*defs.PathAddReaderRes, error)
+}</code></pre>
+  <p>RTMP 서버가 "내가 pathManager에게 필요한 건 이 세 개뿐"이라고 <em>사용하는 쪽에서</em> 소문자(비공개) 인터페이스로 선언했다 — 0006에서 배운 "인터페이스는 사용하는 쪽이 정의한다" 철학이 프로덕션에서 실제로 이렇게 쓰인다. 덕분에 이 패키지는 pathManager의 실물 없이 테스트할 수 있다.</p>
+
+  <h2>6. 배운 문법이 실전에서 어떻게 보이나</h2>
+  <table>
+    <tr><th>실코드 (위치)</th><th>배운 것</th></tr>
+    <tr><td><code>go c.run()</code> — <code>internal/servers/rtmp/conn.go:65</code></td><td>연결 하나 = 고루틴 하나 (<a href="0007-goroutines-and-channels.html">0007</a>)</td></tr>
+    <tr><td><code>mutex sync.RWMutex</code> + <code>inboundBytes atomic.Uint64</code> — <code>internal/stream/stream.go:275</code>의 <code>Stream</code> struct</td><td>뮤텍스를 품은 구조체, 원자적 카운터 (<a href="0005-structs-and-methods.html">0005</a>·0013)</td></tr>
+    <tr><td><code>chAPIConfigGlobalPatch chan configGlobalPatchReq</code> (요청 struct 안에 <code>res chan error</code>) — <code>internal/core/core.go</code></td><td>채널로 요청을 보내고 <em>응답 채널을 동봉</em>하는 요청-응답 패턴 — 0007의 채널이 락 없는 API로 진화한 형태</td></tr>
+    <tr><td><code>defer res2.Path.RemovePublisher(...)</code> — <code>internal/servers/rtmp/conn.go:313</code></td><td>등록 직후 해제를 defer로 예약 (<a href="0003-error-handling.html">0003</a>)</td></tr>
+  </table>
+
+  <h2>7. 추적 과제 — RTMP publish의 여정 (답은 직접)</h2>
+  <p>OBS가 RTMP로 송출을 시작하면 그 연결은 어떤 경로로 스트림이 되는가? 힌트만 준다:</p>
+  <ol class="steps">
+    <li>시작점: <code>internal/servers/rtmp/listener.go</code> — 연결을 받으면 무엇을 <code>go</code>로 띄우는지 보라.</li>
+    <li><code>grep -n "runPublish" internal/servers/rtmp/conn.go</code> — 분기 지점(publish냐 read냐)을 찾아라.</li>
+    <li><code>grep -rn "AddPublisher" internal/servers/rtmp/</code> — 이 연결이 <code>pathManager</code>에 도착하는 줄을 찾으면 성공. 거기서 <code>Author: c</code>가 무슨 뜻인지 5장의 인터페이스와 연결해 보라.</li>
+    <li>여력이 있으면 ⑤단계도: <code>internal/servers/rtmp/server_test.go</code>를 열어 테스트가 서버를 어떻게 띄우고 publish를 흉내 내는지 훑어보라.</li>
+  </ol>
+
+  <h2>8. 다음 단계 — 여기서부터는 위즈덤 구간</h2>
+  <p>기초 아크(0001–0007)와 실전 아크(0008–0014)를 완주했다. 지식과 스킬은 갖췄고, 이제 필요한 건 실전 상호작용이다:</p>
+  <ul>
+    <li><strong>회사 Go 코드베이스에 첫 PR</strong> — 미션의 마지막 성공 기준. 작은 것부터 (테스트 추가, 작은 수정).</li>
+    <li><strong><a href="https://go.dev/wiki/Questions">Gophers Slack</a>의 #beginners-help</strong> — 막힌 질문의 실시간 답변. <a href="https://reddit.com/r/golang">r/golang</a>은 설계 토론 구경용.</li>
+    <li>다음 레슨은 <strong>여러분의 실전 경험 보고를 바탕으로</strong> 설계된다 — 막힌 곳, 리뷰에서 받은 지적, 퀴즈 오답을 가져오면 그게 커리큘럼이 된다.</li>
+  </ul>
+
+  <h2>9. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>첫 문제는 레슨 0013 복습이다 (간격 반복).</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://github.com/bluenviron/mediamtx">bluenviron/mediamtx</a> — 오늘의 원전은 문서가 아니라 코드베이스 그 자체다. 리포의 <code>docs/</code>(publish/read 문서)를 훑고, 문서가 말하는 기능이 오늘 그린 지도의 어느 패키지에 사는지 대조해 보라.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "이 코드가 왜 이렇게 생겼지?"가 지금부터 가장 좋은 질문입니다.</p>
+    <p>참고 문서: <a href="../reference/code-reading-playbook.html">코드 리딩 플레이북</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0013-capstone-stream-gateway.html">레슨 0013</a></p>
+    <p><strong>커리큘럼 완주.</strong> 이후는 실전과 함께 — 다음 레슨은 여러분의 실전 보고가 만든다.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) go test에 -race 플래그를 붙이면?",
+      choices: ["고루틴 수를 코어 수로 제한한다", "뮤텍스를 자동으로 삽입해 준다", "데이터 레이스를 실행 중 탐지한다", "채널 연산을 전부 동기로 바꾼다"],
+      answer: 2,
+      explain: "-race는 레이스 디텍터를 켠 채 빌드·실행해 공유 메모리 동시 접근을 실행 시점에 잡아낸다. 동시성 코드의 테스트에는 사실상 필수."
+    },
+    {
+      q: "낯선 Go 코드베이스에서 가장 먼저 볼 파일은?",
+      choices: ["main.go — 진입점과 조립 순서", "가장 큰 .go 파일 — 핵심 로직", "README.md의 사용법 섹션만", "go.sum — 의존성 무결성 목록"],
+      answer: 0,
+      explain: "진입점이 초기화 순서와 구조의 뼈대를 보여준다. mediamtx처럼 main이 15줄이면 진짜 조립실(internal/core)로 가는 이정표가 된다."
+    },
+    {
+      q: "핵심 인터페이스를 먼저 찾는 이유는?",
+      choices: ["코드 양이 가장 많은 곳이라서", "컴파일 순서가 거기서 시작되어서", "성능 병목이 대부분 거기 있어서", "모듈 경계와 교체 지점이 드러나서"],
+      answer: 3,
+      explain: "인터페이스는 패키지 사이의 계약이다. serverPathManager처럼 사용하는 쪽이 정의한 인터페이스를 찾으면 의존 방향과 테스트 심이 한눈에 보인다."
+    },
+    {
+      q: "_test.go 파일이 코드 리딩에서 갖는 가치는?",
+      choices: ["커버리지 수치를 알려주기 때문에", "실행 가능한 사용 예제집이기 때문", "배포에 포함되지 않기 때문이다", "문서보다 항상 짧기 때문이다"],
+      answer: 1,
+      explain: "테스트는 그 API를 실제로 호출하는 코드이므로 거짓말하지 않는 사용 설명서다. server_test.go가 서버 띄우는 법을 그대로 보여주는 식."
+    }
+  ]);
+</script>

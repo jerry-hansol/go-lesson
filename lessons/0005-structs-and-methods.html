@@ -1,0 +1,174 @@
+<meta charset="utf-8">
+<title>레슨 0005 — 구조체·메서드·포인터</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0005 · Go 기초</p>
+  <h1>구조체·메서드·포인터 — 클래스 없이 사는 법</h1>
+  <p class="lede">MediaMTX 코드를 열면 <code>type Stream struct</code>와 <code>func (s *Stream) ...</code>가 도배되어 있다. 오늘은 그 두 문법이 전부다: 데이터 묶음(구조체), 명시적 공유(포인터), 동작 붙이기(메서드). 예상 소요: 35–40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>상태를 가진 <code>Stream</code> 타입에 메서드를 붙여보고, <strong>값 리시버와 포인터 리시버 중 무엇을 언제 쓰는지</strong> 근거를 들어 설명할 수 있다.</p>
+  </div>
+
+  <h2>1. 구조체 — 클래스가 아니라 데이터 묶음</h2>
+  <pre><code>type Stream struct {
+    Name        string
+    BitrateKbps int
+    Live        bool
+}
+
+s1 := Stream{Name: "ebay-live-1", BitrateKbps: 3000}  // 필드명 명시 (권장)
+var s2 Stream   // 모든 필드가 zero value — 이대로 바로 사용 가능</code></pre>
+  <p>Java 클래스에서 익숙한 것들이 여기엔 <strong>없다</strong> — 그리고 그게 설계다 (<a href="https://gobyexample.com/structs">Go by Example: Structs</a>):</p>
+  <table>
+    <tr><th>Java</th><th>Go</th></tr>
+    <tr><td>상속 (<code>extends</code>)</td><td>없음 — 합성으로 해결 (임베딩은 추후 레슨)</td></tr>
+    <tr><td>생성자 (<code>new Stream(...)</code>)</td><td>없음 — 리터럴 또는 <code>NewStream</code> 함수 관례 (§4)</td></tr>
+    <tr><td>getter/setter</td><td>없음 — 필드 직접 접근. 첫 글자 대문자 = 공개 (레슨 0001 규칙 그대로)</td></tr>
+    <tr><td>초기화 안 하면 <code>null</code></td><td>zero value로 채워진 즉시 사용 가능한 값</td></tr>
+  </table>
+
+  <h2>2. 포인터 — Java의 암묵적 참조를 명시적으로</h2>
+  <p>Java에서 객체 변수는 전부 참조라서 대입·전달이 곧 공유다. Go는 반대다: <strong>대입은 값 복사가 기본</strong>이고, 공유하고 싶으면 포인터 <code>*Stream</code>을 명시해야 한다 (<a href="https://gobyexample.com/pointers">Go by Example: Pointers</a>).</p>
+  <pre><code>p := &amp;s1          // &amp; — s1의 주소를 얻는다. p의 타입은 *Stream
+p.BitrateKbps = 4000   // 포인터를 통해 원본 수정 ((*p).BitrateKbps의 단축 표기)
+
+var q *Stream     // 포인터의 zero value는 nil — 역참조하면 panic (부숴보기에서 확인)</code></pre>
+  <p>C를 기억하는 분을 위해: 포인터 <em>연산</em>(<code>p++</code>)은 없다. 주소를 얻고(<code>&amp;</code>) 따라가는(<code>*</code>) 것만 가능해서, Java만큼 안전하면서 복사/공유가 코드에 드러난다.</p>
+
+  <h2>3. 메서드와 리시버 — 값이냐 포인터냐</h2>
+  <p>메서드는 클래스 안이 아니라 함수 앞의 <strong>리시버</strong>로 정의한다. 리시버가 Java의 <code>this</code>다 (<a href="https://gobyexample.com/methods">Go by Example: Methods</a>):</p>
+  <pre><code>func (s *Stream) Start() {   // 포인터 리시버 — 원본의 상태를 바꾼다
+    s.Live = true
+}
+
+func (s Stream) Describe() string {   // 값 리시버 — 복사본을 읽기만 한다
+    ...
+}</code></pre>
+  <p>선택 기준은 공식 FAQ가 명확하다 (<a href="https://go.dev/doc/faq#pointers_vs_values">Go FAQ: Should I define methods on values or pointers?</a>):</p>
+  <table>
+    <tr><th>상황</th><th>리시버</th></tr>
+    <tr><td>메서드가 상태를 <strong>수정</strong>한다</td><td>포인터 <strong>(필수)</strong> — 값 리시버는 복사본만 바꾼다</td></tr>
+    <tr><td>구조체가 크다 (복사 비용)</td><td>포인터</td></tr>
+    <tr><td>메서드 중 <strong>하나라도</strong> 포인터가 필요하다</td><td>전부 포인터로 <strong>통일</strong> (일관성)</td></tr>
+    <tr><td>작고 읽기만 한다</td><td>값도 OK</td></tr>
+  </table>
+  <p>호출은 어느 쪽이든 <code>s.Start()</code>로 쓴다 — 컴파일러가 <code>&amp;s</code>/<code>*s</code>를 자동으로 맞춰준다. 문법은 편하지만 <em>의미</em>(원본 수정 여부)는 리시버 선언이 결정한다는 게 오늘의 핵심.</p>
+
+  <h2>4. 생성자 관례 — NewX</h2>
+  <p>zero value로 충분하면 리터럴로 끝. 초기화 로직이 필요할 때만 <code>New</code> 접두사 함수를 만든다 — 키워드가 아니라 순전히 관례다:</p>
+  <pre><code>// NewStream은 기본 비트레이트로 초기화된 Stream을 반환한다.
+func NewStream(name string) *Stream {
+    return &amp;Stream{Name: name, BitrateKbps: 3000}
+}</code></pre>
+
+  <h2>5. 실습 — 스트림 상태 머신</h2>
+  <ol class="steps">
+    <li><code>playground/structs</code> 디렉토리를 만들고 <code>go mod init streams</code>
+      <p class="expect">모듈명을 <code>structs</code>로 하면 Go 1.26 표준 라이브러리의 <code>structs</code> 패키지와 충돌해 <code>ambiguous import</code> 에러가 난다 — 실측 확인. 표준 라이브러리와 겹치지 않는 이름을 쓰자.</p></li>
+    <li><code>main.go</code> 작성:
+      <pre><code>package main
+
+import "fmt"
+
+// Stream은 방송 스트림 하나의 상태를 담는다.
+type Stream struct {
+	Name        string
+	BitrateKbps int
+	Live        bool
+}
+
+// NewStream은 기본 비트레이트로 초기화된 Stream을 반환한다 (생성자 관례).
+func NewStream(name string) *Stream {
+	return &amp;Stream{Name: name, BitrateKbps: 3000}
+}
+
+// Start는 스트림을 송출 상태로 바꾼다 — 상태를 바꾸므로 포인터 리시버.
+func (s *Stream) Start() {
+	s.Live = true
+}
+
+// Stop은 스트림 송출을 중단한다.
+func (s *Stream) Stop() {
+	s.Live = false
+}
+
+// Describe는 현재 상태를 한 줄로 요약한다 — 읽기만 하므로 값 리시버.
+// (실무에선 Start/Stop이 포인터라 통일하는 편 — 본문 일관성 규칙 참고)
+func (s Stream) Describe() string {
+	state := "대기 중"
+	if s.Live {
+		state = "송출 중"
+	}
+	return fmt.Sprintf("%s (%d kbps) — %s", s.Name, s.BitrateKbps, state)
+}
+
+func main() {
+	s := NewStream("ebay-live-1")
+	fmt.Println(s.Describe())
+
+	s.Start()
+	fmt.Println(s.Describe())
+
+	s.Stop()
+	fmt.Println(s.Describe())
+}</code></pre></li>
+    <li><code>go run .</code>
+      <p class="expect">예상 출력 (실측):<br><code>ebay-live-1 (3000 kbps) — 대기 중</code><br><code>ebay-live-1 (3000 kbps) — 송출 중</code><br><code>ebay-live-1 (3000 kbps) — 대기 중</code></p></li>
+  </ol>
+
+  <h3>부숴보기 — 이번에도 세 가지</h3>
+  <ol class="steps">
+    <li><code>Start</code>의 리시버에서 <code>*</code>만 지우기: <code>func (s Stream) Start()</code>
+      <p class="expect">실측: 에러 없이 컴파일되고 세 줄 <strong>전부 "대기 중"</strong>이 나온다. 값 리시버가 복사본의 <code>Live</code>만 바꾸는 조용한 버그 — Go 입문자가 가장 많이 밟는 함정이다. 확인 후 원상복구.</p></li>
+    <li>새 파일 실험: <code>var s *Stream</code> 선언만 하고 <code>fmt.Println(s.Name)</code>
+      <p class="expect">실측: <code>panic: runtime error: invalid memory address or nil pointer dereference</code> + <code>[signal SIGSEGV ...]</code> + 고루틴 스택. Go의 NPE다 — panic 메시지에서 파일:라인을 읽는 연습. 확인 후 삭제.</p></li>
+    <li>리터럴에 없는 필드 쓰기: <code>Stream{Name: "x", Codec: "h264"}</code>
+      <p class="expect">실측: <code>unknown field Codec in struct literal of type Stream</code> — 컴파일 타임에 잡힌다. 원상복구 후 <code>go fmt ./...</code>로 마무리.</p></li>
+  </ol>
+
+  <h2>6. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0004 복습이다 (간격 반복).</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://gobyexample.com/structs">Go by Example: Structs</a> → <a href="https://gobyexample.com/pointers">Pointers</a> → <a href="https://gobyexample.com/methods">Methods</a> (약 10분) + 리시버 선택 기준의 원문인 <a href="https://go.dev/doc/faq#pointers_vs_values">Go FAQ: values or pointers?</a> (5분).</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "왜 상속을 없앴지?" 같은 설계 질문도 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/structs-methods-cheatsheet.html">구조체·메서드 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0004-slices-and-maps.html">레슨 0004</a> · 다음: <a href="0006-interfaces.html">레슨 0006</a></p>
+    <p>다음 레슨 예고: 인터페이스 — <code>implements</code> 키워드 없는 다형성.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) 맵에서 키 존재 여부까지 확인하며 읽는 관용구는?",
+      choices: ["v, ok := m[k] 로 받는다", "m.contains(k) 를 부른다", "m[k] != nil 로 비교한다", "k in m 구문으로 검사한다"],
+      answer: 0,
+      explain: "맵 읽기는 두 번째 반환값(comma ok)으로 존재 여부를 알려준다. 없는 키는 zero value가 나오므로 값만으론 구분이 안 된다."
+    },
+    {
+      q: "구조체의 상태를 수정하는 메서드의 리시버는?",
+      choices: ["값 리시버여야 한다", "포인터 리시버여야 한다", "어느 쪽이든 동작한다", "정적 메서드여야 한다"],
+      answer: 1,
+      explain: "값 리시버는 복사본을 받으므로 수정이 원본에 반영되지 않는다 — 에러도 없이 사라지는 조용한 버그가 된다 (Go FAQ)."
+    },
+    {
+      q: "var s Stream 선언 직후의 s는?",
+      choices: ["null이라 초기화가 필요하다", "nil이라 접근하면 panic이다", "필드가 zero value인 쓸 수 있는 값", "컴파일 에러라 초기값이 필수다"],
+      answer: 2,
+      explain: "구조체 변수는 선언 즉시 모든 필드가 zero value로 채워진 유효한 값이다. nil이 되는 건 포인터(*Stream) 쪽."
+    },
+    {
+      q: "Go에서 생성자에 해당하는 것은?",
+      choices: ["constructor 키워드로 선언", "타입명과 동일한 이름의 메서드", "new Stream() 연산자 호출", "NewXxx 이름의 일반 함수 관례"],
+      answer: 3,
+      explain: "언어 차원의 생성자는 없다. 초기화 로직이 필요하면 NewStream 같은 평범한 함수를 만드는 관례를 따른다."
+    }
+  ]);
+</script>

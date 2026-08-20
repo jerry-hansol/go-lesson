@@ -1,0 +1,49 @@
+<meta charset="utf-8">
+<title>Go 툴체인 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>Go 툴체인 치트시트</h1>
+  <p class="lede">새 프로젝트를 만들고 실행하기까지 필요한 전부. 출처: <a href="https://go.dev/doc/code">How to Write Go Code</a>, <a href="https://pkg.go.dev/cmd/go">cmd/go 문서</a>.</p>
+
+  <h2>실행 가능한 Go 프로그램의 최소 해부도</h2>
+  <pre><code>package main                // 실행 바이너리의 진입 패키지 (필수 이름)
+
+import "fmt"                // 표준 라이브러리 포맷/출력 패키지
+
+func main() {               // 진입점 함수 — 인자도 반환값도 없다
+    fmt.Println("hello")    // 대문자 P = 패키지 밖으로 공개(exported)된 함수
+}</code></pre>
+  <ul>
+    <li>클래스 없음. 파일은 <strong>패키지</strong>에 속하고, 같은 디렉토리 = 같은 패키지.</li>
+    <li>사용하지 않는 import·지역 변수는 <strong>컴파일 에러</strong> (경고 아님). <a href="https://go.dev/doc/faq#unused_variables_and_imports">Go FAQ</a></li>
+    <li>세미콜론은 쓰지 않는다 (컴파일러가 자동 삽입).</li>
+  </ul>
+
+  <h2>자주 쓰는 명령</h2>
+  <table>
+    <tr><th>명령</th><th>하는 일</th><th>Java로 치면</th></tr>
+    <tr><td><code>go version</code></td><td>설치된 Go 버전 확인</td><td><code>java -version</code></td></tr>
+    <tr><td><code>go mod init &lt;이름&gt;</code></td><td>현재 디렉토리를 모듈로 초기화 (<code>go.mod</code> 생성)</td><td>새 pom.xml/build.gradle</td></tr>
+    <tr><td><code>go run .</code></td><td>컴파일 후 즉시 실행 (바이너리 안 남김)</td><td>IDE의 Run 버튼</td></tr>
+    <tr><td><code>go build .</code></td><td>정적 바이너리 생성 (현재 디렉토리에)</td><td><code>mvn package</code> — 단, JVM 불필요</td></tr>
+    <tr><td><code>go fmt ./...</code></td><td>모든 하위 패키지 코드 포맷 (gofmt)</td><td>포매터 — 단, 유일·공식</td></tr>
+    <tr><td><code>go vet ./...</code></td><td>흔한 실수 정적 분석</td><td>SpotBugs 유사</td></tr>
+    <tr><td><code>go test ./...</code></td><td>모든 하위 패키지 테스트 실행 (추후 레슨)</td><td><code>mvn test</code></td></tr>
+    <tr><td><code>go mod tidy</code></td><td>의존성 추가/정리 — import에 맞춰 go.mod 동기화</td><td>의존성 resolve</td></tr>
+    <tr><td><code>go env</code></td><td>Go 환경 변수 확인</td><td>—</td></tr>
+  </table>
+  <p><code>./...</code>은 "현재 디렉토리와 모든 하위 패키지"라는 뜻의 패턴이다.</p>
+
+  <h2>go run vs go build</h2>
+  <table>
+    <tr><th></th><th>go run .</th><th>go build .</th></tr>
+    <tr><td>용도</td><td>개발 중 빠른 실행</td><td>배포물 생성</td></tr>
+    <tr><td>산출물</td><td>없음 (임시 디렉토리에서 실행 후 삭제)</td><td>단일 정적 바이너리</td></tr>
+    <tr><td>특징</td><td>수 초 내 피드백 루프</td><td>JVM 등 런타임 불필요 → 작은 컨테이너, 단순 배포</td></tr>
+  </table>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="glossary.html">Go 용어집</a> · 첫 등장: <a href="../lessons/0001-first-go-program.html">레슨 0001</a></p>
+  </footer>
+</main>

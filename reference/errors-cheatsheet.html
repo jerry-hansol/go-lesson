@@ -1,0 +1,61 @@
+<meta charset="utf-8">
+<title>Go 에러 처리 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>Go 에러 처리 치트시트</h1>
+  <p class="lede">만들고, 감싸고, 검사하고, 정리하는 패턴 전부. 출처: <a href="https://go.dev/blog/errors-are-values">Errors are values</a>, <a href="https://gobyexample.com/errors">Go by Example: Errors</a>.</p>
+
+  <h2>기본 리듬 — 조기 반환</h2>
+  <pre><code>w, h, err := parseResolution(s)
+if err != nil {
+    return fmt.Errorf("스트림 설정 실패: %w", err)  // 맥락 붙여 위로
+}
+// 성공 경로는 들여쓰기 없이 계속</code></pre>
+  <ul>
+    <li>성공이면 <code>err == nil</code>. 에러면 <em>나머지 반환값은 쓰지 않는 것</em>이 관례.</li>
+    <li>받은 <code>err</code>를 안 쓰면 <code>declared and not used</code> 컴파일 에러 → 무시가 어렵다.</li>
+  </ul>
+
+  <h2>에러 만들기</h2>
+  <table>
+    <tr><th>패턴</th><th>쓰임</th></tr>
+    <tr><td><code>errors.New("고정 메시지")</code></td><td>단순 에러. 패키지 레벨 sentinel(<code>var ErrNotFound = errors.New(...)</code>)로도 사용</td></tr>
+    <tr><td><code>fmt.Errorf("세션 %d 없음", id)</code></td><td>포맷이 필요한 에러</td></tr>
+    <tr><td><code>fmt.Errorf("...: %w", err)</code></td><td><strong>래핑</strong> — 원인 에러를 체인에 보존. 위로 전달할 때 기본값</td></tr>
+  </table>
+
+  <h2>에러 검사</h2>
+  <table>
+    <tr><th>패턴</th><th>쓰임</th></tr>
+    <tr><td><code>if err != nil</code></td><td>실패 여부만 — 90%는 이것</td></tr>
+    <tr><td><code>errors.Is(err, ErrX)</code></td><td>래핑 체인에 특정 에러(sentinel)가 있는지</td></tr>
+    <tr><td><code>errors.As(err, &amp;target)</code></td><td>체인에서 특정 <em>타입</em>의 에러 꺼내기 (구조체·인터페이스 학습 후)</td></tr>
+  </table>
+  <p>⚠️ <code>%v</code>로 포맷하면 체인이 끊겨 <code>errors.Is</code>가 못 찾는다. 원인 보존이 필요하면 반드시 <code>%w</code>.</p>
+
+  <h2>defer — 정리 예약</h2>
+  <pre><code>f, err := os.Open(path)
+if err != nil {
+    return err
+}
+defer f.Close()    // 연 직후에 닫기 예약 — 어떤 return 경로든 실행됨</code></pre>
+  <ul>
+    <li>실행 시점: 감싼 함수가 리턴하기 직전. 여러 개는 역순(LIFO).</li>
+    <li>인자는 <strong>defer 문을 만난 시점에 평가</strong>된다:
+      <pre><code>n := 1
+defer fmt.Println("defer가 본 n:", n)  // → 1이 찍힌다
+n = 99                                  // 이미 늦었다</code></pre></li>
+  </ul>
+
+  <h2>안티패턴</h2>
+  <ul>
+    <li><code>_ = err</code> 또는 <code>v, _ := f()</code>로 에러 버리기 — 컴파일러를 이기는 유일한 방법이자 최악의 습관</li>
+    <li>모든 층에서 로그 찍고 또 위로 반환 — 로그가 중복된다. <em>처리하거나, 감싸서 반환하거나, 둘 중 하나만</em></li>
+    <li><code>panic</code>을 예외처럼 쓰기 — panic은 프로그래머 실수(불변식 위반) 전용. 예상 가능한 실패는 전부 <code>error</code></li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="syntax-basics.html">문법 치트시트</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0003-error-handling.html">레슨 0003</a></p>
+  </footer>
+</main>

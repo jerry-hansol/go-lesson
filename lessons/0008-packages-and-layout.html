@@ -1,0 +1,176 @@
+<meta charset="utf-8">
+<title>레슨 0008 — 패키지와 프로젝트 구조</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0008 · Go 실전</p>
+  <h1>패키지와 프로젝트 구조 — mediamtx가 읽히는 지도</h1>
+  <p class="lede">기초 아크 졸업, 실전 아크 시작. 지금까지는 파일 하나였지만 실제 미디어 서버는 수백 개 패키지다. 오늘은 그 지도를 그리는 법 — 읽는 데서 끝나지 않고 직접 만든다. 예상 소요: 35–40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p><code>cmd/</code>와 <code>internal/</code>로 나뉜 멀티 패키지 모듈을 직접 만들어 실행하고, mediamtx·livekit 저장소를 열었을 때 어디에 무엇이 있는지 예측할 수 있다.</p>
+  </div>
+
+  <h2>1. 디렉토리 = 패키지, import 경로 = 모듈경로/디렉토리</h2>
+  <p>레슨 0001에서 "같은 디렉토리 = 같은 패키지"를 봤다. 멀티 패키지가 되면 규칙이 하나 추가될 뿐이다: <strong>import 경로는 모듈 경로 + 디렉토리 경로</strong>다 (<a href="https://go.dev/doc/code">How to Write Go Code</a>).</p>
+  <pre><code>mediakit/                      ← go.mod: module mediakit
+├── internal/segment/          ← import "mediakit/internal/segment"
+└── cmd/streamctl/             ← package main (진입점)</code></pre>
+  <p>Java와 대비하면: Maven 좌표(groupId/artifactId)와 <code>package</code> 선언이라는 이중 체계 대신, <strong>경로 하나</strong>가 전부다. 같은 모듈 안이면 <code>go.mod</code>에 의존성 선언 없이 바로 import된다. 관례상 패키지 이름은 디렉토리 이름과 같게 하고, 사용할 때는 <code>segment.SplitSegments(...)</code>처럼 패키지명이 접두어가 된다.</p>
+
+  <h2>2. 대문자/소문자 = 패키지 API 설계</h2>
+  <p>레슨 0001의 "대문자 = 공개" 규칙이 여기서 진짜 의미를 갖는다. 한 패키지의 <strong>exported 식별자 집합이 곧 그 패키지의 public API</strong>다. Java에서 인터페이스와 <code>private</code>로 하던 캡슐화 설계를, Go에서는 이름 첫 글자로 한다:</p>
+  <ul>
+    <li><code>SplitSegments</code> — 밖에서 쓰라고 내놓은 계약</li>
+    <li><code>normalize</code> — 패키지 내부 구현. 밖에서는 <em>보이지도 않는다</em> (부숴보기에서 확인)</li>
+  </ul>
+
+  <h2>3. 표준 레이아웃: cmd/ 와 internal/</h2>
+  <p>공식 가이드 <a href="https://go.dev/doc/modules/layout">Organizing a Go module</a>이 권하는 구조는 단순하다:</p>
+  <table>
+    <tr><th>디렉토리</th><th>역할</th><th>강제성</th></tr>
+    <tr><td><code>cmd/&lt;이름&gt;/main.go</code></td><td>바이너리 진입점. 바이너리가 여러 개면 <code>cmd/</code> 아래 나란히</td><td>관례</td></tr>
+    <tr><td><code>internal/</code></td><td>이 모듈 전용 코드. <strong>외부 모듈이 import하면 컴파일 에러</strong></td><td>컴파일러가 강제</td></tr>
+    <tr><td><code>pkg/</code></td><td>외부 공개 라이브러리를 모으는 관례 — 논쟁이 있고, 공식 문서는 굳이 권하지 않는다. 한 줄만 알면 된다</td><td>관례</td></tr>
+  </table>
+  <p><strong>미션 연결</strong> — 실제로 열어 보면: <a href="https://github.com/bluenviron/mediamtx">mediamtx</a>는 루트 <code>main.go</code> 하나 + 코드 전부를 <code>internal/</code> 아래에 두고(외부에 API를 약속하지 않겠다는 선언), <a href="https://github.com/livekit/livekit">livekit</a>은 <code>cmd/</code> + <code>pkg/</code> 구조다. 오늘 배우는 세 조각이 그대로 두 저장소의 지도다.</p>
+
+  <h2>4. 실습 — mediakit 모듈 만들기</h2>
+  <p>레슨 0002의 <code>splitSegments</code>와 0003의 <code>parseResolution</code>을 재사용 가능한 패키지로 승격시킨다.</p>
+  <ol class="steps">
+    <li>구조를 만들고 모듈 초기화:
+      <pre><code>mkdir -p ~/Desktop/repo/learn-go/playground/mediakit/internal/segment
+mkdir -p ~/Desktop/repo/learn-go/playground/mediakit/cmd/streamctl
+cd ~/Desktop/repo/learn-go/playground/mediakit
+go mod init mediakit</code></pre></li>
+    <li><code>internal/segment/segment.go</code> 작성:
+      <pre><code>// Package segment는 스트림 재생 시간과 해상도를 다루는 유틸리티다.
+package segment
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// SplitSegments는 총 재생 시간(초)을 세그먼트 길이로 나눠
+// 온전한 세그먼트 개수와 남는 초를 반환한다.
+func SplitSegments(totalSec, segLen int) (int, int) {
+	return totalSec / segLen, totalSec % segLen
+}
+
+// ParseResolution은 "1920x1080" 형태의 문자열을 가로·세로 정수로 파싱한다.
+func ParseResolution(s string) (int, int, error) {
+	parts := strings.Split(s, "x")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("해상도 형식이 아님: %q", s)
+	}
+	w, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("가로 파싱 실패: %w", err)
+	}
+	h, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("세로 파싱 실패: %w", err)
+	}
+	return w, h, nil
+}
+
+// normalize는 세그먼트 길이를 허용 범위(2~10초)로 보정한다.
+// 소문자 시작 = 패키지 내부 전용(unexported).
+func normalize(segLen int) int {
+	if segLen < 2 {
+		return 2
+	}
+	if segLen > 10 {
+		return 10
+	}
+	return segLen
+}</code></pre></li>
+    <li><code>cmd/streamctl/main.go</code> 작성:
+      <pre><code>// streamctl은 mediakit 라이브러리를 사용하는 CLI 진입점이다.
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"mediakit/internal/segment"
+)
+
+func main() {
+	full, rem := segment.SplitSegments(95, 6)
+	fmt.Println("세그먼트:", full, "개, 마지막:", rem, "초")
+
+	w, h, err := segment.ParseResolution("1920x1080")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "에러:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("해상도: %d×%d (비율 %.2f:1)\n", w, h, float64(w)/float64(h))
+}</code></pre></li>
+    <li>모듈 루트에서 실행 — 패키지 경로로 실행하는 것에 주목:
+      <pre><code>go run ./cmd/streamctl</code></pre>
+      <p class="expect">예상 출력: <code>세그먼트: 15 개, 마지막: 5 초</code> / <code>해상도: 1920×1080 (비율 1.78:1)</code>. <code>go build ./cmd/streamctl</code>이면 <code>streamctl</code> 바이너리가 남는다 — 바이너리가 여러 개인 프로젝트에서 이 패턴이 표준이다.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 경계가 진짜 벽인지 확인한다</h3>
+  <ol class="steps">
+    <li><strong>internal 침범</strong>: <code>playground/outsider</code>라는 별도 모듈을 만들어 남의 internal을 훔쳐 써 본다. <code>outsider/go.mod</code>:
+      <pre><code>module outsider
+
+go 1.26
+
+require mediakit v0.0.0
+
+replace mediakit => ../mediakit</code></pre>
+      <code>outsider/main.go</code>에서 <code>"mediakit/internal/segment"</code>를 import하고 <code>go run .</code>:
+      <p class="expect">예상: <code>main.go:7:2: use of internal package mediakit/internal/segment not allowed</code> — 관례가 아니라 <strong>컴파일러가 거부</strong>한다. mediamtx가 코드 전부를 internal에 두는 이유다. (<code>replace</code>는 로컬 디렉토리로 의존성을 돌리는 개발용 지시자 — 덤으로 배웠다.)</p></li>
+    <li><strong>unexported 접근</strong>: <code>cmd/streamctl/main.go</code>에 <code>_ = segment.normalize</code> 한 줄을 추가하고 <code>go build ./...</code>:
+      <p class="expect">예상: <code>undefined: segment.normalize</code> — "금지됐다"가 아니라 <strong>"존재하지 않는다"</strong>고 나온다. 소문자 식별자는 패키지 밖에서 보이지도 않는다. 확인 후 원상복구.</p></li>
+  </ol>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0007 복습이다 (간격 반복).</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://go.dev/doc/modules/layout">Organizing a Go module</a> (Go 공식, 약 10분). 오늘 배운 레이아웃의 공식 가이드 — 서버 프로젝트/여러 바이너리 섹션이 특히 미션과 직결된다.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "pkg/는 왜 논쟁이지?" 같은 질문도 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/project-layout-cheatsheet.html">프로젝트 레이아웃 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0007-goroutines-and-channels.html">레슨 0007</a> · 다음: <a href="0009-testing.html">레슨 0009</a></p>
+    <p>다음 레슨 예고: 테스트 — <code>go test</code>와 테이블 드리븐 패턴 (회사 컨벤션의 그 "table-driven"이다).</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) main 함수가 리턴하는 순간, 실행 중이던 고루틴들은?",
+      choices: ["전부 그 즉시 종료된다", "끝날 때까지 계속 실행된다", "백그라운드 데몬이 되어 남는다", "런타임이 panic을 일으키게 된다"],
+      answer: 0,
+      explain: "main이 리턴하면 프로그램 전체가 끝나고 고루틴은 모두 즉시 소멸한다. 그래서 WaitGroup이나 채널 수신으로 완료를 기다려야 한다."
+    },
+    {
+      q: "internal/ 디렉토리에 둔 패키지의 효과는?",
+      choices: ["최종 바이너리에서 코드가 제외된다", "테스트 전용 코드 위치로 지정된다", "외부 모듈의 import를 컴파일러가 차단", "문서(godoc)에서 숨김 처리만 된다"],
+      answer: 2,
+      explain: "internal은 관례가 아니라 컴파일러 규칙이다 — 그 모듈(정확히는 internal의 부모 트리) 밖에서 import하면 컴파일 에러가 난다."
+    },
+    {
+      q: "모듈 mediakit 안의 internal/segment 패키지를 import하는 경로는?",
+      choices: ["./internal/segment (상대 경로)", "mediakit/internal/segment", "internal/segment (디렉토리만)", "segment (패키지 이름만 쓴다)"],
+      answer: 1,
+      explain: "import 경로 = 모듈 경로 + 디렉토리 경로. 상대 경로 import는 모듈 모드에서 쓰지 않는다."
+    },
+    {
+      q: "함수를 패키지 밖으로 공개(exported)하는 방법은?",
+      choices: ["public 키워드를 앞에 붙인다", "export 지시 주석을 달아 준다", "파일 이름을 대문자로 시작한다", "함수 이름을 대문자로 시작한다"],
+      answer: 3,
+      explain: "공개 여부는 식별자 첫 글자의 대소문자가 전부다. 키워드도 어노테이션도 없다."
+    }
+  ]);
+</script>

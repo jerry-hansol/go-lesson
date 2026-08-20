@@ -1,0 +1,41 @@
+<meta charset="utf-8">
+<title>코드 리딩 플레이북</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Playbook</p>
+  <h1>코드 리딩 플레이북 — 낯선 Go 코드베이스 여는 법</h1>
+  <p class="lede">처음 보는 Go 프로젝트를 체계적으로 파악하는 5단계. 실전 적용 예시는 <a href="../lessons/0014-reading-mediamtx.html">레슨 0014 (mediamtx 투어)</a>.</p>
+
+  <h2>5단계 절차</h2>
+  <table>
+    <tr><th>단계</th><th>하는 일</th><th>근거 레슨</th></tr>
+    <tr><td>① 진입점부터</td><td><code>main.go</code>를 찾아 초기화 순서를 읽는다. 좋은 프로젝트일수록 main은 짧고, 진짜 조립은 한 단계 아래(예: <code>internal/core</code>)에 있다.</td><td><a href="../lessons/0001-first-go-program.html">0001</a></td></tr>
+    <tr><td>② 디렉토리 지도</td><td>코드를 읽기 전에 <code>ls</code>/<code>tree -L 2</code>로 지도를 그린다. 디렉토리 = 패키지 = 책임 하나. <code>internal/</code>은 외부 import 금지 구역이다.</td><td><a href="../lessons/0008-packages-and-layout.html">0008</a></td></tr>
+    <tr><td>③ 인터페이스가 경계</td><td><code>grep -rn "interface {"</code>로 핵심 인터페이스부터 찾는다. 인터페이스는 모듈 경계·교체 지점·테스트 심(seam)이 모이는 곳이고, Go에선 <em>사용하는 쪽</em>이 정의한다.</td><td><a href="../lessons/0006-interfaces.html">0006</a></td></tr>
+    <tr><td>④ 데이터의 여정 하나</td><td>대표 시나리오 하나(연결 수립→처리→종료)를 진입점부터 끝까지 추적한다. 전체를 다 읽으려 하지 말 것 — 한 여정이 아키텍처를 드러낸다.</td><td><a href="../lessons/0007-goroutines-and-channels.html">0007</a></td></tr>
+    <tr><td>⑤ 테스트가 사용 설명서</td><td><code>*_test.go</code>는 "이 API를 이렇게 쓴다"의 실행 가능한 예제집이다. 문서가 없어도 테스트는 거짓말하지 않는다.</td><td><a href="../lessons/0009-testing.html">0009</a></td></tr>
+  </table>
+
+  <h2>손에 익힐 명령</h2>
+  <table>
+    <tr><th>명령</th><th>용도</th></tr>
+    <tr><td><code>head go.mod</code></td><td>모듈명·Go 버전 — 신원 확인</td></tr>
+    <tr><td><code>grep -rn "interface {" internal/</code></td><td>경계(인터페이스) 목록 뽑기</td></tr>
+    <tr><td><code>grep -rn "func main(" .</code></td><td>진입점 찾기 (cmd/ 여러 개일 수 있음)</td></tr>
+    <tr><td><code>grep -rn "go " --include="*.go" | grep -v _test</code></td><td>고루틴이 태어나는 곳 = 동시성 구조</td></tr>
+    <tr><td><code>go doc ./internal/stream</code></td><td>패키지 공개 API 요약</td></tr>
+    <tr><td><code>git log --follow -- <파일></code></td><td>파일의 변경 이유(커밋 메시지) 추적</td></tr>
+  </table>
+
+  <h2>읽을 때의 규율</h2>
+  <ul>
+    <li><strong>넓게 → 좁게.</strong> 지도 없이 파일 하나를 정독하지 말 것. 미아가 된다.</li>
+    <li><strong>가설을 세우고 grep으로 검증.</strong> "publish는 pathManager로 갈 것이다" → 찾아서 확인. 추측만 하고 넘어가면 배운 게 없다.</li>
+    <li><strong>버전을 기록.</strong> 코드 리딩 노트에는 커밋/태그를 남긴다 — 구조는 바뀐다.</li>
+    <li><strong>막히면 이슈·PR 검색.</strong> 그 코드가 왜 그렇게 생겼는지는 종종 리포의 토론에 있다.</li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>적용 레슨: <a href="../lessons/0014-reading-mediamtx.html">레슨 0014 — mediamtx 투어</a> · 관련: <a href="glossary.html">용어집</a></p>
+  </footer>
+</main>

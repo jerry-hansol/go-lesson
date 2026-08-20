@@ -1,0 +1,198 @@
+<meta charset="utf-8">
+<title>레슨 0010 — net/http API 서버</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0010 · Go 실전</p>
+  <h1>net/http — 표준 라이브러리만으로 API 서버</h1>
+  <p class="lede">Spring Boot 없이, 프레임워크 없이. 표준 라이브러리만으로 라우팅·JSON·에러 응답을 갖춘 API 서버를 띄운다 — 그리고 이게 Go 문화의 기본값이다. 개념 셋: 패턴 라우팅, JSON 인코딩/디코딩, 에러 응답. 예상 소요: 40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>스트림 목록·단건 조회·등록을 처리하는 <strong>REST API 서버를 표준 라이브러리만으로</strong> 띄우고, curl로 200/201/400/404/405를 전부 직접 확인한다.</p>
+  </div>
+
+  <h2>1. 핸들러와 패턴 라우팅 — @RestController의 자리</h2>
+  <p>Go의 핸들러는 어노테이션 붙은 메서드가 아니라 <strong>그냥 함수</strong>다: <code>func(w http.ResponseWriter, r *http.Request)</code>. 라우팅은 <code>http.ServeMux</code>가 맡고, Go 1.22부터 메서드와 경로 와일드카드를 패턴으로 쓴다 (<a href="https://go.dev/blog/routing-enhancements">Routing Enhancements for Go 1.22</a>):</p>
+  <pre><code>mux := http.NewServeMux()
+mux.HandleFunc("GET /streams", listStreams)         // 메서드 매칭
+mux.HandleFunc("GET /streams/{id}", getStream)      // 와일드카드
+mux.HandleFunc("POST /streams", createStream)
+
+id := r.PathValue("id")                             // 핸들러 안에서 {id} 꺼내기</code></pre>
+  <ul>
+    <li>패턴에 없는 메서드로 오면 ServeMux가 <strong>405 + <code>Allow</code> 헤더를 자동으로</strong> 응답한다 — 실습에서 확인.</li>
+    <li>옛 코드에서는 <code>http.HandleFunc("/streams", h)</code> + 핸들러 안 <code>r.Method</code> 분기, 또는 gorilla/mux·chi 같은 서드파티 라우터를 보게 된다 — 1.22 이후 새 코드는 표준만으로 충분한 경우가 많다.</li>
+  </ul>
+
+  <h2>2. JSON — Jackson의 자리엔 encoding/json</h2>
+  <pre><code>type Stream struct {
+    ID          string `json:"id"`            // struct 태그가 JSON 키를 정한다
+    Codec       string `json:"codec"`
+    BitrateKbps int    `json:"bitrate_kbps"`
+}
+
+json.NewEncoder(w).Encode(s)       // 응답에 바로 직렬화 (w는 io.Writer — 레슨 0006!)
+json.NewDecoder(r.Body).Decode(&s) // 요청 바디에서 역직렬화</code></pre>
+  <ul>
+    <li>태그가 없으면 JSON 키는 필드명 그대로(<code>ID</code>, <code>BitrateKbps</code>) — snake_case가 필요하면 태그 필수 (<a href="https://gobyexample.com/json">Go by Example: JSON</a>).</li>
+    <li><strong>함정:</strong> 소문자(unexported) 필드는 <em>에러 없이 조용히</em> 직렬화에서 빠진다. 레슨 0002의 대문자=공개 규칙이 여기서 물어뜯는다 — 부숴보기에서 재현.</li>
+    <li>Encoder/Decoder가 <code>io.Writer</code>/<code>io.Reader</code>를 받는다는 것에 주목 — 레슨 0006에서 배운 작은 인터페이스가 응답 스트림에 그대로 꽂히는 현장이다.</li>
+  </ul>
+
+  <h2>3. 에러 응답 — http.Error와 return</h2>
+  <pre><code>if !ok {
+    http.Error(w, fmt.Sprintf("stream %q not found", id), http.StatusNotFound)
+    return // ← 생략하면 아래 코드가 계속 실행돼 응답이 섞인다
+}</code></pre>
+  <p><code>http.Error</code>는 상태코드와 text/plain 바디(+ <code>X-Content-Type-Options: nosniff</code>)를 쓴다. 상태코드는 <code>http.StatusNotFound</code> 같은 상수로. <strong>핸들러는 예외로 중단되지 않으므로(레슨 0003 — 에러는 값), 에러 응답 후 <code>return</code>은 본인 책임이다.</strong></p>
+
+  <h2>4. 실습 — 스트림 API 서버</h2>
+  <ol class="steps">
+    <li><code>playground/streamapi</code>를 만들고 <code>go mod init streamapi</code> 후 <code>main.go</code> 작성:
+      <pre><code>package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+)
+
+// Stream은 API가 다루는 스트림 리소스다.
+type Stream struct {
+	ID          string `json:"id"`
+	Codec       string `json:"codec"`
+	BitrateKbps int    `json:"bitrate_kbps"`
+}
+
+// 메모리 저장소 — 동시성 안전하지 않다 (레슨 0012에서 이 레이스를 직접 잡는다).
+var streams = map[string]Stream{
+	"live-1": {ID: "live-1", Codec: "h264", BitrateKbps: 2500},
+}
+
+// listStreams는 등록된 스트림 전체를 JSON 배열로 응답한다.
+func listStreams(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	list := make([]Stream, 0, len(streams))
+	for _, s := range streams {
+		list = append(list, s)
+	}
+	json.NewEncoder(w).Encode(list)
+}
+
+// getStream은 경로 와일드카드 {id}로 단건을 조회한다. 없으면 404.
+func getStream(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s, ok := streams[id]
+	if !ok {
+		http.Error(w, fmt.Sprintf("stream %q not found", id), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s)
+}
+
+// createStream은 요청 바디의 JSON을 디코드해 등록한다. 잘못된 입력은 400.
+func createStream(w http.ResponseWriter, r *http.Request) {
+	var s Stream
+	if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
+		http.Error(w, "잘못된 JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if s.ID == "" {
+		http.Error(w, "id는 필수다", http.StatusBadRequest)
+		return
+	}
+	streams[s.ID] = s
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(s)
+}
+
+func main() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /streams", listStreams)
+	mux.HandleFunc("GET /streams/{id}", getStream)
+	mux.HandleFunc("POST /streams", createStream)
+
+	log.Println("listening on :8080")
+	log.Fatal(http.ListenAndServe(":8080", mux))
+}</code></pre></li>
+    <li>터미널 1에서 <code>go run .</code>
+      <p class="expect">예상: <code>listening on :8080</code> 로그 후 대기.</p></li>
+    <li>터미널 2에서 curl 시나리오를 순서대로 (아래는 전부 실측 출력):
+      <pre><code>$ curl -s localhost:8080/streams
+[{"id":"live-1","codec":"h264","bitrate_kbps":2500}]
+
+$ curl -s localhost:8080/streams/live-1
+{"id":"live-1","codec":"h264","bitrate_kbps":2500}
+
+$ curl -si localhost:8080/streams/nope | head -1
+HTTP/1.1 404 Not Found            # 바디: stream "nope" not found
+
+$ curl -si -X POST localhost:8080/streams \
+    -d '{"id":"live-2","codec":"av1","bitrate_kbps":4000}' | head -1
+HTTP/1.1 201 Created              # 바디: 등록된 스트림 JSON
+
+$ curl -s localhost:8080/streams   # live-2가 목록에 추가됨
+[{"id":"live-1",...},{"id":"live-2","codec":"av1","bitrate_kbps":4000}]
+
+$ curl -si -X DELETE localhost:8080/streams | head -2
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, HEAD, POST            # ServeMux가 자동으로 응답</code></pre></li>
+  </ol>
+
+  <h3>부숴보기 — 세 가지</h3>
+  <ol class="steps">
+    <li><strong>깨진 JSON을 쏴보기:</strong> <code>curl -si -X POST localhost:8080/streams -d '{broken'</code>
+      <p class="expect">실측: <code>HTTP/1.1 400 Bad Request</code> + <code>잘못된 JSON: invalid character 'b' looking for beginning of object key string</code> — Decode의 error 반환값(레슨 0003)이 그대로 방어선이 된다.</p></li>
+    <li><strong>필드를 소문자로:</strong> <code>Codec</code>을 <code>codec</code>으로 전부 바꾸고 재시작, <code>GET /streams/live-1</code>
+      <p class="expect">실측: <code>{"id":"live-1","bitrate_kbps":2500}</code> — 에러 없이 <strong>codec 필드만 조용히 증발</strong>했다. 그리고 <code>go vet ./...</code>를 돌리면 <code>struct field codec has json tag but is not exported</code>로 잡아준다 — vet을 CI에 두는 이유. 확인 후 복구.</p></li>
+    <li><strong>WriteHeader 이후 http.Error:</strong> <code>getStream</code> 맨 위에 <code>w.WriteHeader(http.StatusOK)</code>를 추가하고 <code>/streams/nope</code> 호출
+      <p class="expect">실측: 클라이언트는 <code>HTTP/1.1 200 OK</code>에 바디는 <code>stream "nope" not found</code> — 404가 도달하지 못한다! 서버 로그에만 <code>http: superfluous response.WriteHeader call from main.getStream (main.go:38)</code>. <strong>상태코드는 첫 WriteHeader가 확정</strong>하고 이후 호출은 로그만 남긴다. 확인 후 복구.</p></li>
+  </ol>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0009 복습이다.</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://go.dev/blog/routing-enhancements">Routing Enhancements for Go 1.22</a> (Go 공식 블로그, 약 10분). 오늘 쓴 메서드·와일드카드 패턴의 우선순위 규칙까지 설명한다. 짧은 복습용으로는 <a href="https://gobyexample.com/http-server">Go by Example: HTTP Server</a>.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "Spring의 ○○는 Go에서 뭐죠?" 류의 질문 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/http-json-cheatsheet.html">HTTP·JSON 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0009-testing.html">레슨 0009</a> · 다음: <a href="0011-select-and-context.html">레슨 0011</a></p>
+    <p>다음 레슨 예고: select와 context — 취소·타임아웃을 고루틴에 전파하는 법.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) 관련 테스트 케이스 여러 개를 한 테스트 함수로 묶는 Go의 관용적 방법은?",
+      choices: ["케이스 슬라이스를 도는 테이블 드리븐", "케이스마다 함수를 복사해 나열한다", "JUnit처럼 어노테이션으로 묶어준다", "assert 라이브러리 체인으로 검증한다"],
+      answer: 0,
+      explain: "케이스를 struct 슬라이스로 정의하고 for range + t.Run으로 도는 테이블 드리븐 테스트 — 레슨 0009."
+    },
+    {
+      q: "GET /streams/{id} 패턴에서 id 값을 꺼내는 방법은?",
+      choices: ["r.Query().Get(\"id\")를 호출한다", "r.PathValue(\"id\")를 호출한다", "mux.Vars(r)[\"id\"]로 접근한다", "URL 문자열을 직접 파싱해 얻는다"],
+      answer: 1,
+      explain: "Go 1.22+ ServeMux의 와일드카드는 r.PathValue로 꺼낸다. mux.Vars는 gorilla/mux(서드파티) 방식."
+    },
+    {
+      q: "struct 필드가 소문자(unexported)일 때 encoding/json은?",
+      choices: ["에러를 반환하면서 거부한다", "panic을 일으키면서 중단한다", "조용히 그 필드를 건너뛴다", "리플렉션으로 강제 접근한다"],
+      answer: 2,
+      explain: "unexported 필드는 에러 없이 직렬화에서 제외된다. go vet이 'json tag but is not exported'로 경고해 준다."
+    },
+    {
+      q: "http.Error 호출 뒤 return을 빼먹으면?",
+      choices: ["컴파일러가 에러로 잡아내 준다", "두 번째 쓰기가 자동 차단이 된다", "런타임 panic으로 즉시 종료된다", "핸들러가 계속 실행돼 응답이 섞인다"],
+      answer: 3,
+      explain: "핸들러는 예외로 중단되지 않는다. 이후 코드가 계속 실행되고, 추가 WriteHeader는 superfluous 로그만 남긴다."
+    }
+  ]);
+</script>

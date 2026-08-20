@@ -1,0 +1,60 @@
+<meta charset="utf-8">
+<title>Go 치트시트 — 구조체·포인터·메서드</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>구조체·포인터·메서드 치트시트</h1>
+  <p class="lede">데이터 묶음과 동작 붙이기의 최소 문법. 출처: <a href="https://gobyexample.com/structs">Go by Example</a>, <a href="https://go.dev/doc/faq#pointers_vs_values">Go FAQ</a>.</p>
+
+  <h2>구조체</h2>
+  <pre><code>type Stream struct {
+    Name        string
+    BitrateKbps int
+    Live        bool
+}
+
+s := Stream{Name: "a", BitrateKbps: 3000}  // 리터럴 — 필드명 명시 권장
+var z Stream                               // zero value — 즉시 사용 가능 (null 없음)</code></pre>
+  <ul>
+    <li>상속·생성자·getter/setter 없음. 첫 글자 대문자 = 패키지 밖 공개.</li>
+    <li>리터럴에 없는 필드 → <code>unknown field ... in struct literal</code> 컴파일 에러.</li>
+  </ul>
+
+  <h2>포인터</h2>
+  <table>
+    <tr><th>문법</th><th>뜻</th><th>비고</th></tr>
+    <tr><td><code>p := &amp;s</code></td><td>s의 주소 (타입 <code>*Stream</code>)</td><td>대입=복사가 기본, 공유는 명시적</td></tr>
+    <tr><td><code>p.Name</code></td><td><code>(*p).Name</code>의 단축 표기</td><td>역참조 자동</td></tr>
+    <tr><td><code>var p *Stream</code></td><td>zero value는 <code>nil</code></td><td>nil 역참조 → <code>panic: ... nil pointer dereference</code></td></tr>
+    <tr><td>포인터 연산</td><td>없음</td><td>C와 달리 <code>p++</code> 불가 — 안전</td></tr>
+  </table>
+  <p>Java 대비 핵심: Java는 객체 변수가 전부 참조(공유가 암묵적), Go는 값 복사가 기본(공유가 명시적).</p>
+
+  <h2>메서드 — 리시버 선택 기준 (Go FAQ)</h2>
+  <pre><code>func (s *Stream) Start()           { s.Live = true }  // 포인터 리시버: 원본 수정
+func (s Stream)  Describe() string { ... }             // 값 리시버: 복사본 읽기</code></pre>
+  <table>
+    <tr><th>상황</th><th>리시버</th></tr>
+    <tr><td>상태를 수정한다</td><td>포인터 <strong>(필수)</strong></td></tr>
+    <tr><td>구조체가 커서 복사가 비싸다</td><td>포인터</td></tr>
+    <tr><td>하나라도 포인터 리시버가 있다</td><td>전부 포인터로 통일</td></tr>
+    <tr><td>작고 읽기만 한다</td><td>값도 OK</td></tr>
+  </table>
+  <ul>
+    <li>호출은 항상 <code>s.Start()</code> — 컴파일러가 <code>&amp;s</code>/<code>*s</code>를 자동으로 맞춘다.</li>
+    <li><strong>함정</strong>: 값 리시버에서 필드를 수정하면 에러 없이 복사본만 바뀐다 (조용한 버그).</li>
+  </ul>
+
+  <h2>생성자 관례</h2>
+  <pre><code>func NewStream(name string) *Stream {
+    return &amp;Stream{Name: name, BitrateKbps: 3000}
+}</code></pre>
+  <ul>
+    <li>zero value로 충분하면 리터럴로 끝 — <code>New</code> 함수는 초기화 로직이 필요할 때만.</li>
+    <li>모듈명이 표준 라이브러리 패키지와 겹치면 <code>ambiguous import</code> — 예: Go 1.26에서 <code>go mod init structs</code> 금지.</li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="syntax-basics.html">문법 치트시트</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0005-structs-and-methods.html">레슨 0005</a></p>
+  </footer>
+</main>

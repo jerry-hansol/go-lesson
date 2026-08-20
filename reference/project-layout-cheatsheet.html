@@ -1,0 +1,47 @@
+<meta charset="utf-8">
+<title>Go 프로젝트 레이아웃 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>Go 프로젝트 레이아웃 치트시트</h1>
+  <p class="lede">멀티 패키지 모듈의 표준 구조. 출처: <a href="https://go.dev/doc/modules/layout">Organizing a Go module</a>, <a href="https://go.dev/doc/code">How to Write Go Code</a>.</p>
+
+  <h2>표준 트리</h2>
+  <pre><code>mediakit/                        ← 모듈 루트 (go.mod: module mediakit)
+├── go.mod
+├── cmd/
+│   ├── streamctl/main.go        ← 바이너리 1 (package main)
+│   └── mediaprobe/main.go       ← 바이너리 2 — 나란히 추가
+├── internal/
+│   └── segment/segment.go       ← 외부 모듈 import 시 컴파일 에러
+└── (외부 공개 라이브러리는 루트나 pkg/ — pkg/는 선택 관례)</code></pre>
+
+  <h2>import 경로 규칙</h2>
+  <table>
+    <tr><th>상황</th><th>규칙</th></tr>
+    <tr><td>경로 구성</td><td>모듈 경로 + 디렉토리 경로: <code>mediakit/internal/segment</code></td></tr>
+    <tr><td>같은 모듈 내부</td><td>go.mod 선언 없이 바로 import</td></tr>
+    <tr><td>패키지 이름</td><td>디렉토리 이름과 같게 (관례). 사용은 <code>segment.SplitSegments()</code></td></tr>
+    <tr><td>상대 경로</td><td>모듈 모드에서 쓰지 않는다 (<code>./x</code> import 금지)</td></tr>
+    <tr><td>로컬 모듈 참조</td><td>go.mod에 <code>replace mediakit =&gt; ../mediakit</code> (개발용)</td></tr>
+  </table>
+
+  <h2>경계 규칙</h2>
+  <table>
+    <tr><th>수단</th><th>효과</th><th>강제 주체</th></tr>
+    <tr><td>대문자 식별자</td><td>패키지의 public API</td><td>컴파일러 (밖에서 소문자는 <code>undefined</code>)</td></tr>
+    <tr><td><code>internal/</code></td><td>부모 트리 밖에서 import 불가 — <code>use of internal package ... not allowed</code></td><td>컴파일러</td></tr>
+    <tr><td><code>cmd/&lt;이름&gt;/</code></td><td>바이너리별 진입점. 실행은 <code>go run ./cmd/streamctl</code></td><td>관례</td></tr>
+  </table>
+
+  <h2>실제 저장소 사례 (미션 도메인)</h2>
+  <table>
+    <tr><th>저장소</th><th>구조</th><th>읽는 법</th></tr>
+    <tr><td><a href="https://github.com/bluenviron/mediamtx">mediamtx</a></td><td>루트 <code>main.go</code> + 전부 <code>internal/</code></td><td>외부 API를 약속하지 않는 단일 애플리케이션</td></tr>
+    <tr><td><a href="https://github.com/livekit/livekit">livekit</a></td><td><code>cmd/</code> + <code>pkg/</code></td><td>바이너리와 재사용 라이브러리를 분리한 서버</td></tr>
+  </table>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="go-toolchain-cheatsheet.html">툴체인 치트시트</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0008-packages-and-layout.html">레슨 0008</a></p>
+  </footer>
+</main>

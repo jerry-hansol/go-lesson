@@ -1,0 +1,68 @@
+<meta charset="utf-8">
+<title>Go 테스트 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>Go 테스트 치트시트</h1>
+  <p class="lede">테이블 드리븐 골격과 go test 플래그. 출처: <a href="https://go.dev/blog/subtests">Using Subtests and Sub-benchmarks</a>, <a href="https://gobyexample.com/testing-and-benchmarking">Go by Example: Testing and Benchmarking</a>.</p>
+
+  <h2>규칙 (이게 전부)</h2>
+  <ul>
+    <li>파일: <code>xxx_test.go</code> — 대상 코드와 <strong>같은 디렉토리, 같은 패키지</strong></li>
+    <li>함수: <code>func TestXxx(t *testing.T)</code> — 어노테이션·러너·assert 라이브러리 없음</li>
+    <li>실행: <code>go test ./...</code></li>
+  </ul>
+
+  <h2>테이블 드리븐 골격 (회사 컨벤션 표준)</h2>
+  <pre><code>func TestParse(t *testing.T) {
+    tests := []struct {
+        name string      // 서브테스트 이름 (한글 가능, 공백 대신 _)
+        in   string
+        want int
+    }{
+        {name: "정상", in: "6", want: 6},
+        {name: "경계", in: "0", want: 0},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            got := Parse(tt.in)
+            if got != tt.want {
+                t.Errorf("got %d, want %d", got, tt.want)
+            }
+        })
+    }
+}</code></pre>
+  <p>에러를 반환하는 함수는 테이블에 <code>wantOK bool</code>(성공 기대 여부)과 <code>wantIs error</code>(기대 원인)를 두고, <code>errors.Is(err, tt.wantIs)</code>로 원인까지 검증한다 — 전체 예제는 <a href="../lessons/0009-testing.html">레슨 0009</a>.</p>
+
+  <h2>t의 메서드</h2>
+  <table>
+    <tr><th>메서드</th><th>효과</th><th>언제</th></tr>
+    <tr><td><code>t.Errorf(...)</code></td><td>실패 기록 후 <strong>계속 진행</strong></td><td>기본값 — 남은 검사도 의미 있을 때</td></tr>
+    <tr><td><code>t.Fatalf(...)</code></td><td>그 (서브)테스트 <strong>즉시 중단</strong></td><td>이후 검사가 무의미할 때 (전제 실패)</td></tr>
+    <tr><td><code>t.Run(name, fn)</code></td><td>서브테스트 실행</td><td>테이블의 케이스마다</td></tr>
+    <tr><td><code>t.Skip(...)</code></td><td>테스트 건너뛰기</td><td>환경 조건이 안 맞을 때</td></tr>
+  </table>
+  <p>실패 메시지 어휘: 실제 값 <code>got</code>, 기대값 <code>want</code>, 순서도 <code>got X, want Y</code>.</p>
+
+  <h2>go test 플래그</h2>
+  <table>
+    <tr><th>플래그</th><th>하는 일</th></tr>
+    <tr><td><code>-v</code></td><td>서브테스트까지 케이스별 RUN/PASS 출력</td></tr>
+    <tr><td><code>-run 'TestParse/케이스명'</code></td><td>이름 매칭(정규식)으로 골라 실행 — 실패 케이스 하나만 반복할 때</td></tr>
+    <tr><td><code>-cover</code></td><td>문장 커버리지 % 출력</td></tr>
+    <tr><td><code>-coverprofile=cover.out</code></td><td>프로파일 저장 → <code>go tool cover -func=cover.out</code>(함수별 %) / <code>-html=cover.out</code>(안 밟은 줄 색칠)</td></tr>
+    <tr><td><code>-count=1</code></td><td>테스트 캐시 무시 (코드 변경 없으면 <code>ok ... (cached)</code>가 뜬다)</td></tr>
+  </table>
+
+  <h2>흔한 함정</h2>
+  <ul>
+    <li>커버리지 100% ≠ 버그 없음. 하지만 <strong>커버리지 구멍 = 확실히 검증 안 된 분기</strong> — 숫자보다 "안 밟은 분기 찾기"에 쓴다.</li>
+    <li>에러 케이스에서 성공 검사(<code>got/want</code> 비교)로 넘어가지 말 것 — <code>Fatalf</code>로 끊거나 <code>return</code>.</li>
+    <li>서브테스트 이름의 공백은 <code>-run</code> 매칭 시 <code>_</code>로 바뀐다 — 처음부터 <code>_</code>로 짓는 게 편하다.</li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="errors-cheatsheet.html">에러 처리 치트시트</a> · <a href="go-toolchain-cheatsheet.html">툴체인 치트시트</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0009-testing.html">레슨 0009</a></p>
+  </footer>
+</main>

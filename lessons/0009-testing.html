@@ -1,0 +1,246 @@
+<meta charset="utf-8">
+<title>레슨 0009 — 테스트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0009 · Go 실전</p>
+  <h1>테스트 — 테이블 드리븐이 표준이다</h1>
+  <p class="lede">Go의 테스트는 언어에 내장이다 — JUnit 같은 프레임워크도, 어노테이션도 없다. 오늘 배우는 테이블 드리븐 패턴은 Go 커뮤니티의 표준이자 <strong>회사 Go 컨벤션이 요구하는 바로 그 형식</strong>이다. 예상 소요: 35–40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p><code>segment</code> 패키지에 테이블 드리븐 테스트를 붙이고, <code>-cover</code>가 찾아준 미검증 분기를 케이스 추가로 메워 커버리지 100%를 만든다.</p>
+  </div>
+
+  <h2>1. go test — 프레임워크가 없는 테스트</h2>
+  <p>규칙은 두 개뿐이다: 파일 이름이 <code>_test.go</code>로 끝나고, 함수가 <code>func TestXxx(t *testing.T)</code> 시그니처면 <code>go test</code>가 알아서 찾아 실행한다. 테스트는 대상 코드와 <strong>같은 패키지, 같은 디렉토리</strong>에 둔다 (Java의 <code>src/test/java</code> 미러 트리가 없다):</p>
+  <pre><code>internal/segment/
+├── segment.go        // 대상 코드
+└── segment_test.go   // 테스트 — 같은 패키지라 비공개 함수도 접근 가능</code></pre>
+  <table>
+    <tr><th>Java (JUnit)</th><th>Go</th></tr>
+    <tr><td><code>@Test</code> 어노테이션 + 테스트 러너</td><td><code>TestXxx(t *testing.T)</code> 시그니처가 전부</td></tr>
+    <tr><td>assertEquals 등 assertion 라이브러리</td><td><code>if got != want { t.Errorf(...) }</code> — 그냥 Go 코드</td></tr>
+    <tr><td>Maven surefire가 빌드에서 실행</td><td><code>go test ./...</code> 명령 하나</td></tr>
+  </table>
+
+  <h2>2. 테이블 드리븐 + t.Run — 케이스는 데이터다</h2>
+  <p>같은 함수를 입력만 바꿔 여러 번 검증할 때, 테스트 함수를 복붙하는 대신 <strong>케이스를 구조체 슬라이스(테이블)로 선언하고 range로 돌린다</strong>. 각 케이스를 <code>t.Run(이름, ...)</code> 서브테스트로 감싸면 실패가 케이스 단위로 보고되고, 케이스 하나만 골라 실행할 수도 있다 (<a href="https://go.dev/blog/subtests">Using Subtests and Sub-benchmarks — Go 공식 블로그</a>):</p>
+  <pre><code>tests := []struct {
+    name string
+    in   string
+    want int
+}{
+    {name: "정상", in: "6", want: 6},
+    {name: "경계", in: "0", want: 0},
+}
+
+for _, tt := range tests {
+    t.Run(tt.name, func(t *testing.T) {
+        got := doSomething(tt.in)
+        if got != tt.want {
+            t.Errorf("got %d, want %d", got, tt.want)
+        }
+    })
+}</code></pre>
+  <ul>
+    <li><strong>got/want 관례</strong>: 실제 값은 <code>got</code>, 기대값은 <code>want</code> — 실패 메시지도 <code>got X, want Y</code> 순서로. 표준 라이브러리 전체가 이 어휘를 쓴다.</li>
+    <li><strong><code>t.Errorf</code> vs <code>t.Fatalf</code></strong>: <code>Errorf</code>는 실패를 기록하고 계속 진행, <code>Fatalf</code>는 그 (서브)테스트를 즉시 중단. "이게 틀렸으면 이후 검사가 무의미"할 때만 <code>Fatalf</code> — 예: 에러가 없어야 하는데 있으면, 반환값 비교는 의미가 없다.</li>
+    <li>새 케이스 추가 = 테이블에 한 줄 — 테스트 로직은 그대로. 이것이 테이블 드리븐의 힘이다.</li>
+  </ul>
+
+  <h2>3. 커버리지 — 안 밟은 분기를 찾아주는 도구</h2>
+  <pre><code>go test ./... -cover                          # 문장 커버리지 % 출력
+go test ./internal/segment -coverprofile=cover.out
+go tool cover -func=cover.out                 # 함수별 % (터미널)
+go tool cover -html=cover.out                 # 안 밟은 줄을 브라우저에서 색으로</code></pre>
+  <p>숫자 자체보다 <strong>"어느 분기를 안 밟았나"</strong>가 진짜 정보다 — 실습에서 직접 겪는다.</p>
+
+  <h2>4. 실습 — segment 패키지에 테스트 붙이기</h2>
+  <ol class="steps">
+    <li>레슨 0008의 <code>playground/mediakit</code>에서 이어간다. <strong>0008 실습을 건너뛰었다면</strong>: <code>playground/mediakit</code>을 만들고 <code>go mod init mediakit</code> 후, <code>internal/segment/segment.go</code>에 아래 내용(레슨 0002·0003의 함수를 패키지로 옮긴 것)을 저장:
+      <pre><code>// Package segment는 스트림 세그먼트 계산과 해상도 파싱을 담당한다.
+package segment
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// ParseResolution은 "1920x1080" 형태의 문자열을 파싱해
+// 가로, 세로 픽셀 수를 반환한다.
+func ParseResolution(s string) (int, int, error) {
+	parts := strings.Split(s, "x")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("해상도 형식이 아님: %q", s)
+	}
+	w, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("가로 값 파싱 실패: %w", err)
+	}
+	h, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("세로 값 파싱 실패: %w", err)
+	}
+	return w, h, nil
+}
+
+// SplitSegments는 총 재생 시간(초)을 세그먼트 길이로 나눠
+// 온전한 세그먼트 개수와 남는 초를 반환한다.
+func SplitSegments(totalSec, segLen int) (int, int) {
+	return totalSec / segLen, totalSec % segLen
+}</code></pre></li>
+    <li>같은 디렉토리에 <code>segment_test.go</code> 작성 — 에러 케이스는 <code>errors.Is</code>로 원인까지 검증한다:
+      <pre><code>package segment
+
+import (
+	"errors"
+	"strconv"
+	"testing"
+)
+
+// TestParseResolution은 정상·에러 입력을 테이블로 검증한다.
+func TestParseResolution(t *testing.T) {
+	tests := []struct {
+		name   string
+		in     string
+		wantW  int
+		wantH  int
+		wantOK bool  // 성공을 기대하는가
+		wantIs error // 기대하는 원인 에러 (nil이면 검사 생략)
+	}{
+		{name: "FHD", in: "1920x1080", wantW: 1920, wantH: 1080, wantOK: true},
+		{name: "UHD_4K", in: "3840x2160", wantW: 3840, wantH: 2160, wantOK: true},
+		{name: "구분자_없음", in: "1920", wantOK: false},
+		{name: "숫자_아님", in: "abcxdef", wantOK: false, wantIs: strconv.ErrSyntax},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, h, err := ParseResolution(tt.in)
+
+			if tt.wantOK {
+				if err != nil {
+					t.Fatalf("에러가 없어야 하는데: %v", err)
+				}
+				if w != tt.wantW || h != tt.wantH {
+					t.Errorf("got %dx%d, want %dx%d", w, h, tt.wantW, tt.wantH)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatal("에러를 기대했지만 nil")
+			}
+			if tt.wantIs != nil && !errors.Is(err, tt.wantIs) {
+				t.Errorf("원인 에러 불일치: got %v, want %v", err, tt.wantIs)
+			}
+		})
+	}
+}
+
+// TestSplitSegments는 세그먼트 분할 계산을 테이블로 검증한다.
+func TestSplitSegments(t *testing.T) {
+	tests := []struct {
+		name              string
+		totalSec, segLen  int
+		wantFull, wantRem int
+	}{
+		{name: "나머지_있음", totalSec: 95, segLen: 6, wantFull: 15, wantRem: 5},
+		{name: "딱_떨어짐", totalSec: 60, segLen: 6, wantFull: 10, wantRem: 0},
+		{name: "세그먼트보다_짧음", totalSec: 4, segLen: 6, wantFull: 0, wantRem: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			full, rem := SplitSegments(tt.totalSec, tt.segLen)
+			if full != tt.wantFull || rem != tt.wantRem {
+				t.Errorf("got (%d, %d), want (%d, %d)", full, rem, tt.wantFull, tt.wantRem)
+			}
+		})
+	}
+}</code></pre></li>
+    <li><code>go test ./... -v</code>
+      <p class="expect">예상: 서브테스트가 케이스 이름별로 하나씩 PASS:</p>
+      <pre><code>=== RUN   TestParseResolution
+=== RUN   TestParseResolution/FHD
+=== RUN   TestParseResolution/UHD_4K
+=== RUN   TestParseResolution/구분자_없음
+=== RUN   TestParseResolution/숫자_아님
+--- PASS: TestParseResolution (0.00s)
+    --- PASS: TestParseResolution/FHD (0.00s)
+    ...
+--- PASS: TestSplitSegments (0.00s)
+PASS
+ok  	mediakit/internal/segment	0.440s</code></pre></li>
+    <li>이제 커버리지: <code>go test ./... -cover</code>
+      <p class="expect">예상: <code>coverage: 90.9% of statements</code> — 다 통과했는데 100%가 아니다. 범인을 찾자:</p>
+      <pre><code>go test ./internal/segment -coverprofile=cover.out
+go tool cover -func=cover.out</code></pre>
+      <pre><code>mediakit/internal/segment/segment.go:12:	ParseResolution	90.0%
+mediakit/internal/segment/segment.go:30:	SplitSegments	100.0%
+total:						(statements)	90.9%</code></pre>
+      <p class="expect"><code>ParseResolution</code>의 어느 분기가 안 밟혔을까? <code>"abcxdef"</code>는 <strong>가로</strong> 파싱에서 이미 실패하므로, "세로 값 파싱 실패" 분기는 아무 케이스도 안 밟는다. 커버리지가 테스트 설계의 구멍을 찾아준 것.</p></li>
+    <li>테이블에 한 줄 추가 — 이게 테이블 드리븐의 힘이다:
+      <pre><code>{name: "세로가_숫자_아님", in: "1080xabc", wantOK: false, wantIs: strconv.ErrSyntax},</code></pre>
+      <p class="expect">다시 <code>go test ./... -cover</code> → <code>coverage: 100.0% of statements</code>. 테스트 로직은 한 글자도 안 바꿨다.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 실패를 읽는 법</h3>
+  <ol class="steps">
+    <li><code>나머지_있음</code> 케이스의 <code>wantFull: 15</code>를 <code>16</code>으로 일부러 틀리게 하고 <code>go test ./...</code>
+      <p class="expect">예상:</p>
+      <pre><code>--- FAIL: TestSplitSegments (0.00s)
+    --- FAIL: TestSplitSegments/나머지_있음 (0.00s)
+        segment_test.go:66: got (15, 5), want (16, 5)
+FAIL
+FAIL	mediakit/internal/segment	0.433s</code></pre>
+      <p class="expect">읽는 순서: 어느 테스트의 <strong>어느 케이스</strong>가(<code>/나머지_있음</code>), <strong>어느 파일 몇 번째 줄</strong>에서(<code>segment_test.go:66</code>), 실제로 뭘 받았고 뭘 기대했나(<code>got/want</code>). 다른 케이스는 계속 실행됐다는 점도 확인(<code>Errorf</code>라서). 원상복구.</p></li>
+    <li>서브테스트 하나만 실행: <code>go test ./internal/segment -run 'TestParseResolution/숫자_아님' -v</code>
+      <p class="expect">예상: 해당 케이스만 RUN/PASS — 큰 테이블에서 실패한 케이스 하나만 반복 실행할 때의 무기다. 참고로 코드 변경 없이 재실행하면 <code>ok ... (cached)</code>가 붙는다 — 캐시를 무시하려면 <code>-count=1</code>.</p></li>
+  </ol>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0008 복습이다.</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://go.dev/blog/subtests">Using Subtests and Sub-benchmarks — Marcel van Lohuizen (Go 공식 블로그)</a> (약 15분). t.Run이 왜 도입됐고 테이블 드리븐과 어떻게 결합하는지의 원본. 압축 예제는 <a href="https://gobyexample.com/testing-and-benchmarking">Go by Example: Testing and Benchmarking</a>.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "모킹은 어떻게 하나?" 같은 질문 환영입니다 (짧은 답: 인터페이스를 받으면 가짜 구현을 넣으면 됩니다 — 레슨 0006이 복선이었습니다).</p>
+    <p>참고 문서: <a href="../reference/testing-cheatsheet.html">테스트 치트시트</a> · <a href="../reference/errors-cheatsheet.html">에러 처리 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0008-packages-and-layout.html">레슨 0008</a> · 다음: <a href="0010-http-server.html">레슨 0010</a></p>
+    <p>다음 레슨 예고: net/http로 스트림 API — 표준 라이브러리만으로 HTTP 서버를 띄운다.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) internal/ 디렉토리 아래 패키지의 특징은?",
+      choices: ["그 모듈 안에서만 import 가능", "테스트 코드만 import 가능", "같은 파일 안에서만 사용 가능", "어디서든 자유롭게 import 가능"],
+      answer: 0,
+      explain: "internal 아래 패키지는 그 모듈(정확히는 internal의 부모) 바깥에서 import하면 컴파일 에러 — 컴파일러가 강제하는 비공개 경계다."
+    },
+    {
+      q: "go test가 테스트로 인식하는 함수의 조건은?",
+      choices: ["@Test 주석이 붙은 함수", "test 패키지 안의 모든 함수", "_test.go 파일의 TestXxx 함수", "main에서 호출된 검증 함수"],
+      answer: 2,
+      explain: "_test.go로 끝나는 파일 안의 func TestXxx(t *testing.T) — 어노테이션도 러너 설정도 없다."
+    },
+    {
+      q: "t.Fatalf가 t.Errorf와 다른 점은?",
+      choices: ["전체 테스트 실행을 멈춘다", "그 서브테스트를 즉시 중단한다", "실패해도 계속 진행을 한다", "에러 로그만 남기고 통과한다"],
+      answer: 1,
+      explain: "Fatalf는 그 (서브)테스트만 즉시 중단한다 — 다른 케이스는 계속 돈다. 이후 검사가 무의미할 때만 쓴다."
+    },
+    {
+      q: "문장 커버리지를 확인하는 명령은?",
+      choices: ["go vet -coverage ./...", "go build -cover 후 실행", "gofmt -cover ./... 실행", "go test ./... -cover 실행"],
+      answer: 3,
+      explain: "go test의 -cover 플래그. -coverprofile + go tool cover -func/-html로 안 밟은 분기까지 찾는다."
+    }
+  ]);
+</script>

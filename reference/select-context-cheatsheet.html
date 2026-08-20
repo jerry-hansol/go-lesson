@@ -1,0 +1,69 @@
+<meta charset="utf-8">
+<title>select·context 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>select·context 치트시트</h1>
+  <p class="lede">다중 채널 대기와 취소 전파. 출처: <a href="https://gobyexample.com/select">Go by Example</a>, <a href="https://go.dev/blog/context">Go Concurrency Patterns: Context</a>.</p>
+
+  <h2>select 패턴 3종</h2>
+  <pre><code>// ① 타임아웃 — 늦으면 포기
+select {
+case v := &lt;-ch:
+    use(v)
+case &lt;-time.After(100 * time.Millisecond):
+    // 시한 초과 처리
+}
+
+// ② 논블로킹 — 있으면 받고 없으면 지나감
+select {
+case v := &lt;-ch:
+    use(v)
+default:
+    // 지금은 없음
+}
+
+// ③ 취소 대응 워커 — 일 vs 중단 신호
+select {
+case &lt;-time.After(cost):        // 또는 case out &lt;- result:
+    // 작업 진행
+case &lt;-ctx.Done():
+    return                       // ctx.Err()에 사유
+}</code></pre>
+  <ul>
+    <li>여러 case 동시 준비 → <strong>무작위</strong> 하나 실행 (기아 방지). 순서 의존 금지.</li>
+    <li>case 없는 <code>select {}</code>는 영원히 블록.</li>
+  </ul>
+
+  <h2>context 생성 계보</h2>
+  <table>
+    <tr><th>생성</th><th>용도</th></tr>
+    <tr><td><code>context.Background()</code></td><td>루트. main·서버 시작점에서만</td></tr>
+    <tr><td><code>context.WithCancel(parent)</code></td><td>수동 취소 — cancel() 호출 시</td></tr>
+    <tr><td><code>context.WithTimeout(parent, d)</code></td><td>시한부 — d 경과 시 자동 취소</td></tr>
+    <tr><td><code>context.WithDeadline(parent, t)</code></td><td>절대 시각 기준 시한부</td></tr>
+    <tr><td><code>context.WithValue(parent, k, v)</code></td><td>요청 스코프 값 (요청 ID 등) — 남용 금지</td></tr>
+  </table>
+
+  <h2>규칙 (실무 관례)</h2>
+  <ul>
+    <li>함수 <strong>첫 인자</strong>로 받고, 아래로 계속 넘긴다: <code>func f(ctx context.Context, ...)</code></li>
+    <li>cancel을 받았으면 <strong><code>defer cancel()</code></strong> — 안 하면 <code>go vet</code>의 lostcancel이 context leak으로 잡는다</li>
+    <li><code>ctx.Done()</code>은 select의 case로. <code>ctx.Err()</code>는 <code>context.Canceled</code>(수동/클라이언트 이탈) vs <code>context.DeadlineExceeded</code>(시한 초과)</li>
+    <li>부모 취소 → 자손 전부 취소. HTTP 핸들러에서는 <code>r.Context()</code>가 출발점 (클라이언트가 끊으면 취소됨)</li>
+    <li>struct 필드에 저장하지 말고 호출마다 인자로 전달 (<a href="https://go.dev/blog/context">공식 블로그</a> 권고)</li>
+  </ul>
+
+  <h2>함정 표</h2>
+  <table>
+    <tr><th>함정</th><th>증상</th><th>처방</th></tr>
+    <tr><td>cancel 버리기 (<code>ctx, _ :=</code>)</td><td>vet: "should be called, not discarded" — 타이머 누수</td><td><code>defer cancel()</code></td></tr>
+    <tr><td>닫힌 채널을 select에서 계속 수신</td><td>해당 case가 항상 즉시 준비 → CPU 100% 무한 루프</td><td><code>v, ok := &lt;-ch</code>로 받고 <code>!ok</code>면 <code>ch = nil</code> — nil 채널은 select에서 영원히 준비 안 됨</td></tr>
+    <tr><td>루프 안에서 매번 <code>time.After</code></td><td>반복마다 새 타이머 할당 — 낭비</td><td><code>time.NewTimer</code> 재사용 (심화)</td></tr>
+    <tr><td>select 순서에 의존</td><td>간헐적 버그 (동시 준비 시 무작위)</td><td>우선순위가 필요하면 select 중첩으로 명시</td></tr>
+  </table>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="concurrency-cheatsheet.html">동시성 치트시트</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0011-select-and-context.html">레슨 0011</a></p>
+  </footer>
+</main>

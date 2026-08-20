@@ -1,0 +1,64 @@
+<meta charset="utf-8">
+<title>Go 문법 치트시트 — 선언·타입·함수</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>Go 문법 치트시트 — 선언·타입·함수</h1>
+  <p class="lede">변수·상수·함수의 최소 문법. 출처: <a href="https://gobyexample.com/variables">Go by Example</a>, <a href="https://go.dev/ref/spec">Go Spec</a>.</p>
+
+  <h2>변수·상수 선언</h2>
+  <table>
+    <tr><th>형태</th><th>예</th><th>비고</th></tr>
+    <tr><td>선언만</td><td><code>var n int</code></td><td>zero value로 초기화됨</td></tr>
+    <tr><td>선언+초기화</td><td><code>var codec = "h264"</code></td><td>타입 추론</td></tr>
+    <tr><td>짧은 선언</td><td><code>n := 6</code></td><td>함수 안에서만. 실무에서 가장 흔함</td></tr>
+    <tr><td>상수</td><td><code>const maxKbps = 8000</code></td><td>컴파일 타임 상수</td></tr>
+  </table>
+  <ul>
+    <li><code>:=</code>는 선언, <code>=</code>는 대입. 기존 변수에 <code>:=</code> 재사용 → <code>no new variables</code> 에러.</li>
+    <li>안 쓰는 지역 변수·import = 컴파일 에러.</li>
+  </ul>
+
+  <h2>zero value</h2>
+  <table>
+    <tr><th>타입</th><th>값</th></tr>
+    <tr><td><code>int</code>, <code>float64</code> 등 숫자</td><td><code>0</code></td></tr>
+    <tr><td><code>string</code></td><td><code>""</code></td></tr>
+    <tr><td><code>bool</code></td><td><code>false</code></td></tr>
+    <tr><td>포인터, 슬라이스, 맵 등</td><td><code>nil</code> (추후 레슨)</td></tr>
+  </table>
+
+  <h2>타입 변환</h2>
+  <pre><code>f := float64(someInt)     // 항상 명시적 — T(v) 형태
+i := int(someFloat)       // 소수부 버림(truncate)</code></pre>
+  <ul>
+    <li>암묵적 승격 없음. 타입이 다르면 연산 자체가 <code>mismatched types</code> 에러.</li>
+    <li>정수/정수 나눗셈은 정수다 — 변환이 안 보이면 정수 연산이다.</li>
+  </ul>
+
+  <h2>함수</h2>
+  <pre><code>func splitSegments(totalSec, segLen int) (int, int) {
+    return totalSec / segLen, totalSec % segLen
+}
+
+full, rem := splitSegments(95, 6)     // 다중 반환 받기
+onlyFull, _ := splitSegments(95, 6)   // 필요 없는 값은 _ 로 버리기</code></pre>
+  <ul>
+    <li>타입은 이름 <em>뒤</em>. 같은 타입 파라미터는 묶어서 <code>a, b int</code>.</li>
+    <li>다중 반환이 <code>(값, error)</code> 에러 처리 관례의 토대 (추후 레슨).</li>
+  </ul>
+
+  <h2>fmt 포맷 동사 (자주 쓰는 것만)</h2>
+  <table>
+    <tr><th>동사</th><th>뜻</th><th>예</th></tr>
+    <tr><td><code>%v</code></td><td>기본 표현 (만능)</td><td><code>fmt.Printf("%v", x)</code></td></tr>
+    <tr><td><code>%d</code></td><td>10진 정수</td><td><code>%d개</code></td></tr>
+    <tr><td><code>%s</code></td><td>문자열</td><td><code>%s 코덱</code></td></tr>
+    <tr><td><code>%.1f</code></td><td>소수점 1자리 실수</td><td><code>%.1f%%</code></td></tr>
+    <tr><td><code>%T</code></td><td>값의 타입</td><td>디버깅용</td></tr>
+  </table>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="go-toolchain-cheatsheet.html">툴체인 치트시트</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0002-variables-types-functions.html">레슨 0002</a></p>
+  </footer>
+</main>

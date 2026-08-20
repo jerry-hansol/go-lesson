@@ -1,0 +1,66 @@
+<meta charset="utf-8">
+<title>Go 동시성 치트시트 — 고루틴·채널·WaitGroup</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>Go 동시성 치트시트 — 고루틴·채널·WaitGroup</h1>
+  <p class="lede">출처: <a href="https://go.dev/doc/effective_go#sharing">Effective Go — Concurrency</a>, <a href="https://gobyexample.com/goroutines">Go by Example</a>. 슬로건: <em>"메모리를 공유해서 통신하지 말고, 통신해서 메모리를 공유하라."</em></p>
+
+  <h2>기본 연산</h2>
+  <table>
+    <tr><th>코드</th><th>뜻</th><th>Java로 치면</th></tr>
+    <tr><td><code>go f(x)</code></td><td>새 고루틴에서 f 실행 (기다리지 않음)</td><td>executor.submit — 단, 언어 키워드</td></tr>
+    <tr><td><code>make(chan T)</code></td><td>unbuffered 채널 — 송수신이 만나야 진행</td><td>SynchronousQueue</td></tr>
+    <tr><td><code>make(chan T, n)</code></td><td>버퍼 n짜리 채널 — 버퍼 차면 송신 블록</td><td>BlockingQueue</td></tr>
+    <tr><td><code>ch <- v</code></td><td>송신 (수신자/버퍼 자리 날 때까지 블록)</td><td>queue.put</td></tr>
+    <tr><td><code>v := <-ch</code></td><td>수신 (값 올 때까지 블록)</td><td>queue.take</td></tr>
+    <tr><td><code>v, ok := <-ch</code></td><td>수신 + 채널이 닫혔는지 확인 (닫힘 = ok가 false)</td><td>—</td></tr>
+    <tr><td><code>close(ch)</code></td><td>"더 안 보낸다" 선언 — 생산자만, 한 번만</td><td>—</td></tr>
+    <tr><td><code>for v := range ch</code></td><td>닫히고 소진될 때까지 수신</td><td>—</td></tr>
+    <tr><td><code>wg.Add(1) / Done() / Wait()</code></td><td>완료 카운터 (Add는 go 띄우기 전에)</td><td>CountDownLatch</td></tr>
+  </table>
+
+  <h2>팬아웃 → 수집 패턴 (검증된 뼈대)</h2>
+  <pre><code>results := make(chan string)
+var wg sync.WaitGroup
+
+for id := 1; id <= n; id++ {
+    wg.Add(1)                    // go 띄우기 전에 Add
+    go func() {
+        defer wg.Done()          // 어떤 경로로 끝나든 반드시 Done
+        results <- work(id)
+    }()
+}
+
+go func() {                      // 클로저(closer) 고루틴:
+    wg.Wait()                    // 전원 완료를 기다렸다가
+    close(results)               // 채널을 닫는다 — range 종료 조건
+}()
+
+for r := range results {         // main은 결과를 소진
+    fmt.Println(r)
+}</code></pre>
+  <p>루프 변수 클로저 캡처는 Go 1.22+에서 안전(반복마다 새 변수). 옛 코드베이스는 <code>go func(id int){...}(id)</code>로 인자 전달한다.</p>
+
+  <h2>흔한 사고와 증상</h2>
+  <table>
+    <tr><th>사고</th><th>증상</th><th>원인·처방</th></tr>
+    <tr><td>main 조기 종료</td><td><strong>출력 없음, 에러도 없음</strong> (가장 위험)</td><td>main은 고루틴을 안 기다린다 → WaitGroup/채널 수신으로 대기</td></tr>
+    <tr><td>전원 블록</td><td><code>fatal error: all goroutines are asleep - deadlock!</code> + <code>[chan send]</code>/<code>[chan receive]</code> 스택</td><td>수신자 없는 송신, close 안 된 채널 range 등. 스택의 대괄호가 멈춘 지점</td></tr>
+    <tr><td>닫힌 채널 송신</td><td><code>panic: send on closed channel</code></td><td>닫는 쪽은 생산자 하나로 고정</td></tr>
+    <tr><td>이중 close</td><td><code>panic: close of closed channel</code></td><td>위와 동일 — close 책임자를 한 곳으로</td></tr>
+    <tr><td>nil 채널 사용</td><td>영원히 블록 (zero value 채널)</td><td><code>var ch chan T</code>만 하고 make를 잊음</td></tr>
+  </table>
+
+  <h2>언제 뭘 쓰나</h2>
+  <ul>
+    <li><strong>완료만 기다리면</strong> → WaitGroup</li>
+    <li><strong>결과·데이터를 넘겨야 하면</strong> → 채널</li>
+    <li><strong>여러 채널을 동시에 기다리면</strong> → <code>select</code> (심화 레슨 예정)</li>
+    <li>공유 변수에 락이 꼭 필요한 경우의 <code>sync.Mutex</code>도 있다 — 단, 채널로 풀 수 있으면 채널 먼저</li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="glossary.html">용어집</a> · <a href="go-toolchain-cheatsheet.html">툴체인 치트시트</a> · 첫 등장: <a href="../lessons/0007-goroutines-and-channels.html">레슨 0007</a></p>
+  </footer>
+</main>

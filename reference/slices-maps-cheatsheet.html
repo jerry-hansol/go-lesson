@@ -1,0 +1,53 @@
+<meta charset="utf-8">
+<title>슬라이스·맵 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>슬라이스·맵 치트시트</h1>
+  <p class="lede">Go 컬렉션의 연산과 함정. 출처: <a href="https://go.dev/blog/slices-intro">Go Slices: usage and internals</a>, <a href="https://gobyexample.com/maps">Go by Example</a>.</p>
+
+  <h2>슬라이스 연산</h2>
+  <table>
+    <tr><th>연산</th><th>코드</th><th>비고</th></tr>
+    <tr><td>리터럴</td><td><code>s := []int{1, 2, 3}</code></td><td>배열([3]int)과 달리 크기 없음</td></tr>
+    <tr><td>생성</td><td><code>make([]int, len, cap)</code></td><td>cap 생략 가능</td></tr>
+    <tr><td>추가</td><td><code>s = append(s, x, y)</code></td><td><strong>반환값 필수</strong> — 재할당될 수 있음</td></tr>
+    <tr><td>이어붙이기</td><td><code>s = append(s, t...)</code></td><td>슬라이스 펼치기</td></tr>
+    <tr><td>슬라이싱</td><td><code>s[1:3]</code>, <code>s[:2]</code>, <code>s[2:]</code></td><td><strong>복사 아님</strong> — 같은 배열을 보는 창</td></tr>
+    <tr><td>복사</td><td><code>n := copy(dst, src)</code></td><td>짧은 쪽 길이만큼 복사</td></tr>
+    <tr><td>길이/용량</td><td><code>len(s)</code> / <code>cap(s)</code></td><td>cap 초과 append → 새 배열로 복사</td></tr>
+  </table>
+
+  <h2>맵 연산</h2>
+  <table>
+    <tr><th>연산</th><th>코드</th><th>비고</th></tr>
+    <tr><td>생성</td><td><code>make(map[string]int)</code></td><td>리터럴: <code>map[string]int{"a": 1}</code></td></tr>
+    <tr><td>쓰기/읽기</td><td><code>m[k] = v</code> / <code>m[k]</code></td><td>없는 키 읽기 = zero value (에러 아님)</td></tr>
+    <tr><td>존재 확인</td><td><code>v, ok := m[k]</code></td><td>comma ok 관용구 — "없음"과 "0" 구분</td></tr>
+    <tr><td>삭제</td><td><code>delete(m, k)</code></td><td>없는 키 삭제도 안전</td></tr>
+    <tr><td>카운팅</td><td><code>m[k]++</code></td><td>zero value 덕에 초기화 불필요</td></tr>
+    <tr><td>순회</td><td><code>for k, v := range m</code></td><td><strong>순서 무작위</strong> (의도적)</td></tr>
+  </table>
+
+  <h2>nil 동작 비대칭 (중요)</h2>
+  <table>
+    <tr><th></th><th>nil 슬라이스 (var s []int)</th><th>nil 맵 (var m map[string]int)</th></tr>
+    <tr><td>읽기/len/range</td><td>안전 (len 0)</td><td>안전 (zero value, len 0)</td></tr>
+    <tr><td>쓰기/추가</td><td><code>append</code> 안전 — 그대로 써도 됨</td><td><strong>panic</strong>: assignment to entry in nil map</td></tr>
+    <tr><td>결론</td><td><code>var s []T</code>로 시작해도 OK</td><td>쓰기 전 반드시 <code>make</code></td></tr>
+  </table>
+
+  <h2>공유(aliasing) 함정 요약</h2>
+  <pre><code>orig := []int{2400, 3100, 2800, 4500}
+head := orig[0:2]         // 같은 배열을 본다 (len 2, cap 4)
+head[0] = 9999            // orig[0]도 9999
+head = append(head, 7777) // cap이 남아 있어 orig[2]를 덮어씀!</code></pre>
+  <ul>
+    <li>독립된 복사가 필요하면 <code>copy</code> 또는 <code>append([]int(nil), s...)</code>.</li>
+    <li>함수 파라미터로 받은 슬라이스를 수정하면 호출자에게 보인다 — 의도가 아니면 복사부터.</li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="syntax-basics.html">문법 치트시트</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0004-slices-and-maps.html">레슨 0004</a></p>
+  </footer>
+</main>

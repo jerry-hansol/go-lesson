@@ -1,0 +1,125 @@
+<meta charset="utf-8">
+<title>레슨 0002 — 변수·타입·함수</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0002 · Go 기초</p>
+  <h1>변수·타입·함수 — Java 반사신경 덮어쓰기</h1>
+  <p class="lede">레슨 0001이 쉬웠다고 하셔서 밀도를 올렸습니다. 이번엔 개념 셋: 선언과 zero value, 명시적 타입 변환, 다중 반환 함수. 예상 소요: 35–40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>HLS 스트림의 세그먼트 개수를 계산하는 <strong>다중 반환 함수</strong>를 직접 작성하고, Java와 다르게 동작하는 지점 세 곳(zero value, 명시적 변환, <code>_</code>)을 설명할 수 있다.</p>
+  </div>
+
+  <h2>1. 변수 선언 세 가지와 zero value</h2>
+  <pre><code>var bitrate int          // ① 선언만 — 자동으로 zero value(0)로 초기화된다
+var codec = "h264"       // ② 초기값에서 타입 추론 (string)
+segLen := 6              // ③ 짧은 선언 — 선언+초기화 한 번에. 함수 안에서만 가능</code></pre>
+  <p>실무 Go 코드의 대부분은 ③ <code>:=</code>다. 단, <code>:=</code>는 <em>선언</em>이고 <code>=</code>는 <em>대입</em> — 이미 있는 변수에 <code>:=</code>를 다시 쓰면 "no new variables" 에러가 난다.</p>
+  <p>Java와 결정적으로 다른 점: Go에는 "초기화 안 된 변수" 상태가 없다. 모든 변수는 선언 즉시 타입별 <a href="../reference/glossary.html#zero-value">zero value</a>를 갖는다 (<a href="https://gobyexample.com/variables">Go by Example: Variables</a>).</p>
+  <table>
+    <tr><th>타입</th><th>zero value</th><th>Java였다면</th></tr>
+    <tr><td><code>int</code>, <code>float64</code></td><td><code>0</code></td><td>필드는 0, 지역 변수는 컴파일 에러</td></tr>
+    <tr><td><code>string</code></td><td><code>""</code> (빈 문자열)</td><td><code>null</code> — NPE의 원흉</td></tr>
+    <tr><td><code>bool</code></td><td><code>false</code></td><td>false / null</td></tr>
+  </table>
+  <p>상수는 <code>const maxBitrate = 8000</code>. 그리고 레슨 0001의 unused import와 같은 철학으로, <strong>선언하고 안 쓴 지역 변수도 컴파일 에러</strong>다.</p>
+
+  <h2>2. 타입 변환은 항상 명시적</h2>
+  <p>Java의 암묵적 승격(<code>int</code>→<code>long</code>→<code>double</code>)이 Go에는 <strong>없다</strong>. 타입이 다르면 연산 자체가 컴파일 에러이고, 변환은 항상 <code>T(v)</code> 형태로 쓴다:</p>
+  <pre><code>var total int = 95
+ratio := float64(total) / 4.0   // OK — 명시적 변환
+// bad := total / 4.0           // 컴파일 에러: mismatched types</code></pre>
+  <p>귀찮아 보이지만, 미디어 코드에서 비트레이트·타임스탬프 계산할 때 정밀도 손실이 일어나는 지점이 코드에 전부 드러난다는 뜻이다.</p>
+
+  <h2>3. 함수 — 타입은 뒤에, 반환은 여러 개</h2>
+  <pre><code>// splitSegments는 총 재생 시간(초)을 세그먼트 길이로 나눠
+// 온전한 세그먼트 개수와 남는 초를 반환한다.
+func splitSegments(totalSec, segLen int) (int, int) {
+    return totalSec / segLen, totalSec % segLen
+}</code></pre>
+  <ul>
+    <li><strong>타입이 이름 뒤에</strong> 온다: <code>totalSec int</code>. 같은 타입 파라미터는 <code>totalSec, segLen int</code>처럼 묶는다.</li>
+    <li><strong>반환값이 여러 개</strong>: <code>(int, int)</code>. Java처럼 DTO나 Pair 클래스를 만들 필요가 없다 (<a href="https://gobyexample.com/multiple-return-values">Go by Example: Multiple Return Values</a>).</li>
+    <li>받을 때는 <code>full, rem := splitSegments(95, 6)</code>. 하나가 필요 없으면 <a href="../reference/glossary.html#blank">블랭크 식별자</a> <code>_</code>로 버린다: <code>full, _ := ...</code> — 안 쓰는 변수가 에러이기 때문에 "받고 방치"가 불가능하다.</li>
+  </ul>
+  <p><strong>예고:</strong> 이 다중 반환이 Go 에러 처리의 토대다. 표준 라이브러리 함수 대부분이 <code>(값, error)</code>를 반환한다 — 다음 레슨의 주인공.</p>
+
+  <h2>4. 실습 — HLS 세그먼트 계산기</h2>
+  <ol class="steps">
+    <li><code>playground/basics</code> 디렉토리를 만들고 모듈 초기화 (<code>go mod init basics</code>) 후 <code>main.go</code> 작성:
+      <pre><code>package main
+
+import "fmt"
+
+// splitSegments는 총 재생 시간(초)을 세그먼트 길이로 나눠
+// 온전한 세그먼트 개수와 남는 초를 반환한다.
+func splitSegments(totalSec, segLen int) (int, int) {
+	return totalSec / segLen, totalSec % segLen
+}
+
+func main() {
+	total := 95 // 95초짜리 스트림
+	full, rem := splitSegments(total, 6)
+	fmt.Println("세그먼트:", full, "개, 마지막:", rem, "초")
+
+	ratio := float64(rem) / float64(total) * 100
+	fmt.Printf("남는 구간 비율: %.1f%%\n", ratio)
+}</code></pre>
+      <p class="expect">예상 출력: <code>세그먼트: 15 개, 마지막: 5 초</code> / <code>남는 구간 비율: 5.3%</code>. <code>Printf</code>는 C 스타일 포맷 동사(<code>%d</code>, <code>%.1f</code> 등)를 쓴다 — 목록은 <a href="../reference/syntax-basics.html">문법 치트시트</a>에.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 이번엔 세 가지</h3>
+  <ol class="steps">
+    <li><code>unused := 42</code> 한 줄을 추가하고 <code>go run .</code>
+      <p class="expect">예상: <code>declared and not used: unused</code> — import와 동일한 철학. 확인 후 삭제.</p></li>
+    <li><code>ratio</code> 계산에서 <code>float64(total)</code>의 변환만 지우기: <code>float64(rem) / total * 100</code>
+      <p class="expect">예상: <code>invalid operation: ... mismatched types float64 and int</code> — 암묵적 승격이 없다는 걸 컴파일러가 증명한다. 원상복구.</p></li>
+    <li>이번엔 변환을 <em>둘 다</em> 지우기: <code>rem / total * 100</code>
+      <p class="expect">예상: 에러 없이 컴파일되고 <code>0.0%</code>가 나온다(<code>rem/total</code>이 정수 나눗셈으로 0). Java와 똑같은 함정이지만, Go에선 float 연산에 변환이 반드시 보이므로 "변환이 안 보이면 정수 연산"이라고 코드에서 바로 읽어낼 수 있다. 원상복구 후 <code>go fmt ./...</code>로 마무리.</p></li>
+  </ol>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0001 복습이다 (간격 반복).</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://gobyexample.com/variables">Go by Example: Variables</a> → <a href="https://gobyexample.com/constants">Constants</a> → <a href="https://gobyexample.com/functions">Functions</a> → <a href="https://gobyexample.com/multiple-return-values">Multiple Return Values</a> (약 10분). 오늘 배운 것의 최소 동작 예제들 — 순서대로 훑으면 복습이 된다.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> 특히 "왜 암묵적 변환을 없앴지?" 같은 설계 질문 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/syntax-basics.html">문법 치트시트</a> · <a href="../reference/go-toolchain-cheatsheet.html">툴체인 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0001-first-go-program.html">레슨 0001</a></p>
+    <p>다음 레슨 예고: 에러 처리 — 예외(try/catch)가 없는 언어에서 <code>(값, error)</code>로 사는 법.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) go build . 가 만들어내는 것은?",
+      choices: ["JVM에서 도는 바이트코드", "단독 실행되는 정적 바이너리", "실행 후 사라지는 임시 파일", "패키지 의존성 목록 파일"],
+      answer: 1,
+      explain: "go build는 런타임 없이 단독 실행되는 정적 바이너리를 만든다. 실행 후 사라지는 쪽은 go run이다."
+    },
+    {
+      q: "var s string 선언 직후 s의 값은?",
+      choices: ["null이 들어있다", "nil이 들어있다", "빈 문자열이다", "정해지지 않았다"],
+      answer: 2,
+      explain: "모든 변수는 선언 즉시 zero value를 갖는다. string의 zero value는 빈 문자열 \"\" — null이 아니다."
+    },
+    {
+      q: "int 변수 x를 float64 나눗셈에 쓰려면?",
+      choices: ["자동으로 승격이 된다", "float64(x)로 변환한다", "(float64) x로 캐스팅", "x.toFloat64()를 호출"],
+      answer: 1,
+      explain: "Go에는 암묵적 숫자 승격이 없다. 변환은 항상 T(v) 함수 호출 형태 — float64(x)."
+    },
+    {
+      q: "다중 반환값 중 하나를 버리는 방법은?",
+      choices: ["변수 _ 로 받아 버린다", "변수로 받은 뒤 방치한다", "받을 변수 자체를 생략한다", "void 타입으로 캐스팅한다"],
+      answer: 0,
+      explain: "블랭크 식별자 _ 로 받는다. '받고 방치'는 안 쓰는 변수 컴파일 에러 때문에 불가능하다."
+    }
+  ]);
+</script>

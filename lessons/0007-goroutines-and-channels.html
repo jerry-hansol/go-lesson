@@ -1,0 +1,169 @@
+<meta charset="utf-8">
+<title>레슨 0007 — 고루틴과 채널</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0007 · Go 기초</p>
+  <h1>고루틴과 채널 — 미디어 서버가 Go를 쓰는 이유</h1>
+  <p class="lede">기초 아크의 피날레. MediaMTX가 스트림 수백 개를, LiveKit이 참가자 수천 명을 한 프로세스에서 받아내는 메커니즘이 오늘 주제다. 예상 소요: 40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>세그먼트 6개를 병렬 트랜스코딩하는 프로그램을 작성해 <strong>3초 → 0.5초</strong> 단축을 직접 측정하고, 데드락 에러 전문을 읽고 원인을 설명할 수 있다.</p>
+  </div>
+
+  <h2>1. 고루틴 — 스레드가 아니라 훨씬 싼 것</h2>
+  <p>함수 호출 앞에 <code>go</code> 한 단어를 붙이면 동시 실행이다 (<a href="https://gobyexample.com/goroutines">Go by Example: Goroutines</a>):</p>
+  <pre><code>go transcode(seg)     // 새 고루틴에서 실행 — 기다리지 않고 다음 줄로</code></pre>
+  <table>
+    <tr><th></th><th>Java 스레드</th><th>고루틴</th></tr>
+    <tr><td>초기 스택</td><td>~1MB (OS 스레드)</td><td>수 KB — 필요하면 자람</td></tr>
+    <tr><td>현실적 개수</td><td>수천 개면 부담</td><td>수십만 개도 일상</td></tr>
+    <tr><td>생성 문법</td><td>ExecutorService 등 라이브러리</td><td>언어 키워드 <code>go</code></td></tr>
+  </table>
+  <p>미디어 서버의 현실이 바로 이 표다: 연결 하나당 읽기·쓰기·타임아웃용 고루틴을 여러 개 띄우는 설계가 Go에서는 <em>기본형</em>이다.</p>
+  <p><strong>규칙 하나</strong>: main 함수가 리턴하면 실행 중이던 고루틴은 <em>그 즉시 전부 죽는다</em>. 기다려주지 않는다 — 그래서 다음이 필요하다.</p>
+
+  <h2>2. sync.WaitGroup — 다 끝날 때까지 기다리기</h2>
+  <p>Java의 <code>CountDownLatch</code>에 해당한다 (<a href="https://gobyexample.com/waitgroups">Go by Example: WaitGroups</a>):</p>
+  <pre><code>var wg sync.WaitGroup
+for id := 1; id <= 6; id++ {
+    wg.Add(1)                  // 카운터 +1 (go 띄우기 전에!)
+    go func() {
+        defer wg.Done()        // 레슨 0003의 defer — 끝나면 반드시 -1
+        transcode(id)
+    }()
+}
+wg.Wait()                      // 카운터가 0이 될 때까지 블록</code></pre>
+  <p>참고: 클로저가 루프 변수 <code>id</code>를 잡는 건 Go 1.22부터 반복마다 새 변수라 안전하다. 그 이전 코드베이스(여러분이 읽을 미디어 서버 코드 포함)에서는 <code>go func(id int) {...}(id)</code>처럼 인자로 넘기는 패턴을 보게 될 것이다.</p>
+
+  <h2>3. 채널 — 고루틴 사이의 파이프</h2>
+  <p>Go 동시성의 슬로건: <em>"메모리를 공유해서 통신하지 말고, 통신해서 메모리를 공유하라"</em> (<a href="https://go.dev/doc/effective_go#sharing">Effective Go — Share by communicating</a>). 그 통신 수단이 채널이다 (<a href="https://gobyexample.com/channels">Go by Example: Channels</a>):</p>
+  <pre><code>results := make(chan string)   // string이 흐르는 unbuffered 채널
+results <- "seg-1.ts 완료"      // 송신 (채널이 왼쪽)
+r := <-results                 // 수신 (채널이 오른쪽)</code></pre>
+  <ul>
+    <li><strong>unbuffered 채널은 동기화 지점이다</strong>: 송신은 수신자가 받아갈 때까지, 수신은 송신자가 보낼 때까지 블록된다. 락 없이 "전달 완료"가 보장되는 이유.</li>
+    <li>버퍼가 필요하면 <code>make(chan string, 100)</code> — Java의 <code>BlockingQueue</code>에 가깝지만 언어 내장이다 (<a href="https://gobyexample.com/channel-buffering">Channel Buffering</a>).</li>
+  </ul>
+
+  <h2>4. close와 range — "더 안 온다"를 알리는 법</h2>
+  <pre><code>close(results)                 // 생산자가 닫는다 (수신자는 닫지 않는다)
+for r := range results {       // 채널이 닫혀 비워질 때까지 수신
+    fmt.Println(r)
+}</code></pre>
+  <p><code>range</code> 루프는 채널이 <strong>close되어야</strong> 끝난다 (<a href="https://gobyexample.com/range-over-channels">Range over Channels</a>, <a href="https://gobyexample.com/closing-channels">Closing Channels</a>). 안 닫으면? 부숴보기에서 직접 본다. (여러 채널을 동시에 기다리는 <code>select</code>는 다음 심화 레슨에서.)</p>
+
+  <h2>5. 실습 — 세그먼트 병렬 트랜스코딩</h2>
+  <ol class="steps">
+    <li><code>playground/concurrency</code>를 만들고 (<code>go mod init concurrency</code>) 먼저 <strong>순차 버전</strong>을 작성:
+      <pre><code>package main
+
+import (
+	"fmt"
+	"time"
+)
+
+// transcode는 세그먼트 하나를 트랜스코딩하는 척한다 (0.5초짜리 작업).
+func transcode(id int) string {
+	time.Sleep(500 * time.Millisecond)
+	return fmt.Sprintf("seg-%d.ts 완료", id)
+}
+
+func main() {
+	start := time.Now()
+	for id := 1; id <= 6; id++ {
+		fmt.Println(transcode(id))
+	}
+	fmt.Println("총 소요:", time.Since(start).Round(10*time.Millisecond))
+}</code></pre>
+      <p class="expect">예상: seg-1부터 순서대로 출력되고 <code>총 소요: 3.01s</code> — 6 × 0.5초.</p></li>
+    <li>이제 main을 <strong>병렬 버전</strong>으로 교체:
+      <pre><code>func main() {
+	start := time.Now()
+
+	results := make(chan string)
+	var wg sync.WaitGroup
+
+	for id := 1; id <= 6; id++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results <- transcode(id)
+		}()
+	}
+
+	// 워커가 전부 끝나면 채널을 닫는다 — 닫혀야 아래 range가 끝난다
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for r := range results {
+		fmt.Println(r)
+	}
+	fmt.Println("총 소요:", time.Since(start).Round(10*time.Millisecond))
+}</code></pre>
+      <p class="expect">import에 <code>"sync"</code> 추가. 예상: 순서는 뒤섞여 나오고(고루틴 완료 순서는 비결정적 — 실행마다 다르다) <code>총 소요: 500ms</code>. 방금 6배를 벌었다.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 동시성 사고 3종</h3>
+  <ol class="steps">
+    <li>병렬 버전에서 WaitGroup·채널을 다 빼고 <code>go func() { fmt.Println(transcode(id)) }()</code>만 남긴 뒤 실행.
+      <p class="expect">예상: <strong>아무것도 출력되지 않고</strong> 정상 종료된다. 에러조차 없다 — main이 고루틴을 기다리지 않고 리턴했기 때문. 동시성 버그가 무서운 이유(조용함)를 기억할 것.</p></li>
+    <li>새 파일에서 아무도 수신하지 않는 채널에 송신해 보기: <code>ch := make(chan string); ch <- "hello"</code>
+      <p class="expect">예상 출력 (전문을 읽어보자):</p>
+      <pre><code>fatal error: all goroutines are asleep - deadlock!
+
+goroutine 1 [chan send]:
+main.main()
+	.../main.go:5 +0x34
+exit status 2</code></pre>
+      <p class="expect"><code>[chan send]</code>가 "송신에서 멈춰 있다"는 뜻이다. 런타임이 전원 잠든 것을 감지해 즉사시켜 준다 — 침묵보다 훨씬 나은 실패.</p></li>
+    <li>닫힌 채널에 송신: <code>ch := make(chan int, 1); close(ch); ch <- 1</code>
+      <p class="expect">예상: <code>panic: send on closed channel</code>. 그래서 규칙이 "닫는 건 생산자, 그것도 한 번만"이다.</p></li>
+  </ol>
+
+  <h2>6. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0006 복습이다.</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://gobyexample.com/goroutines">Go by Example: Goroutines</a> → <a href="https://gobyexample.com/channels">Channels</a> → <a href="https://gobyexample.com/waitgroups">WaitGroups</a> (약 10분), 이후 <a href="https://go.dev/doc/effective_go#sharing">Effective Go — Concurrency</a> (약 10분). 후자는 오늘 슬로건의 원문이다.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> 특히 데드락 스택트레이스를 들고 오시면 같이 읽어드립니다.</p>
+    <p>참고 문서: <a href="../reference/concurrency-cheatsheet.html">동시성 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0006-interfaces.html">레슨 0006</a></p>
+    <p>기초 아크 완료! 다음은 실전 아크 — <a href="0008-packages-and-layout.html">레슨 0008: 패키지와 프로젝트 구조</a>부터 시작해 테스트, net/http 서버, select·context, 레이스를 거쳐 캡스톤과 mediamtx 실코드 읽기까지 이어진다. 전체 지도는 <a href="index.html">코스 인덱스</a>.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) Go에서 타입이 인터페이스를 구현하는 조건은?",
+      choices: ["implements로 선언해야 한다", "메서드 집합만 맞으면 된다", "인터페이스를 임베딩해야 한다", "리플렉션으로 등록해야 한다"],
+      answer: 1,
+      explain: "Go의 인터페이스 구현은 암묵적이다 — 요구하는 메서드를 다 갖추면 그걸로 끝. implements 키워드 자체가 없다."
+    },
+    {
+      q: "main 함수가 리턴하는 순간, 실행 중이던 고루틴은?",
+      choices: ["끝날 때까지 계속 실행된다", "백그라운드 데몬이 된다", "그 즉시 전부 종료된다", "GC 시점까지만 실행된다"],
+      answer: 2,
+      explain: "main이 리턴하면 프로세스가 끝나고 고루틴은 전부 즉사한다. 그래서 WaitGroup이나 채널 수신으로 기다려야 한다."
+    },
+    {
+      q: "unbuffered 채널에 대한 송신 ch <- v 가 완료되는 시점은?",
+      choices: ["버퍼에 값이 복사된 즉시", "채널이 close되는 순간에", "다음 스케줄링 시점마다", "수신자가 값을 받아갈 때"],
+      answer: 3,
+      explain: "unbuffered 채널의 송신은 수신자가 받아갈 때까지 블록된다 — 채널이 동기화 지점인 이유."
+    },
+    {
+      q: "for r := range ch 루프는 언제 끝나나?",
+      choices: ["송신 측이 채널을 close하면", "채널의 버퍼가 다 비워지면", "zero value가 수신되는 순간", "WaitGroup의 Wait가 풀리면"],
+      answer: 0,
+      explain: "range는 채널이 닫히고 남은 값이 소진되어야 끝난다. 안 닫으면 영원히 기다리다 데드락이 된다."
+    }
+  ]);
+</script>

@@ -1,0 +1,169 @@
+<meta charset="utf-8">
+<title>레슨 0011 — select와 context</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0011 · Go 실전</p>
+  <h1>select와 context — 멈출 줄 아는 동시성</h1>
+  <p class="lede">레슨 0007에서 고루틴을 <em>시작</em>하는 법을 배웠다. 실무의 나머지 절반은 <em>멈추는</em> 법이다 — 시청자가 플레이어를 닫았는데 서버가 트랜스코딩을 계속하면 그게 리소스 누수다. 예상 소요: 40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p><code>context.WithTimeout</code>으로 느린 트랜스코딩 워커를 끊는 파이프라인을 작성하고, <code>ctx.Done()</code>/<code>ctx.Err()</code>와 <code>defer cancel()</code> 관례를 설명할 수 있다.</p>
+  </div>
+
+  <h2>1. select — 여러 채널을 동시에 기다린다</h2>
+  <p>switch처럼 생겼지만 대상이 값이 아니라 <strong>채널 연산</strong>이다. 준비된 case가 실행되고, 없으면 블록된다. Java라면 Selector나 폴링 루프를 짜야 할 일이 언어 문법 하나로 끝난다 (<a href="https://gobyexample.com/select">Go by Example: Select</a>).</p>
+  <pre><code>ch := make(chan string)
+go func() {
+    time.Sleep(200 * time.Millisecond)
+    ch &lt;- "keyframe"
+}()
+
+select {
+case v := &lt;-ch:
+    fmt.Println("받음:", v)
+case &lt;-time.After(100 * time.Millisecond):   // ① 타임아웃 패턴
+    fmt.Println("타임아웃 — 스트림이 늦는다")
+}
+
+select {
+case v := &lt;-ch:
+    fmt.Println("받음:", v)
+default:                                      // ② 논블로킹 패턴
+    fmt.Println("지금은 없음 — 논블로킹")
+}</code></pre>
+  <p class="expect">실제 출력: <code>타임아웃 — 스트림이 늦는다</code> / <code>지금은 없음 — 논블로킹</code> (keyframe은 200ms 뒤에나 오므로 둘 다 못 받는다. <a href="https://gobyexample.com/timeouts">Go by Example: Timeouts</a>)</p>
+  <p>두 case가 <em>동시에</em> 준비되면? 위의 것이 아니라 <strong>무작위로 하나</strong>가 실행된다 — 한 채널만 계속 선택되는 기아(starvation)를 막는 의도적 설계다.</p>
+
+  <h2>2. context — 취소를 전파하는 트리</h2>
+  <p>Java에 대응물이 없는, Go 실무의 필수 관례다. <code>Thread.interrupt()</code>가 스레드 하나를 찌르는 것이라면, context는 <strong>요청 하나에 얽힌 고루틴 전부</strong>에 "그만"을 방송하는 트리다 (<a href="https://go.dev/blog/context">Go Concurrency Patterns: Context — Sameer Ajmani</a>).</p>
+  <pre><code>ctx := context.Background()                       // 루트 — 절대 취소되지 않음
+ctx, cancel := context.WithCancel(ctx)            // 수동 취소 가능한 자식
+ctx, cancel := context.WithTimeout(ctx, 2*time.Second)  // 시한부 자식</code></pre>
+  <ul>
+    <li><code>ctx.Done()</code> — 취소되면 <strong>닫히는 채널</strong>을 돌려준다. 닫힌 채널 수신은 즉시 리턴하므로(레슨 0007) select의 case로 바로 쓴다.</li>
+    <li><code>ctx.Err()</code> — 취소 <em>사유</em>. 수동 취소면 <code>context.Canceled</code>, 시한 초과면 <code>context.DeadlineExceeded</code>.</li>
+    <li>부모가 취소되면 모든 자손이 함께 취소된다 — 그래서 실무 Go 함수 대부분의 시그니처가 <code>func f(ctx context.Context, ...)</code>로 시작한다. 받았으면 아래로 계속 넘기는 것이 규칙.</li>
+    <li><code>cancel</code>을 받았으면 <strong>반드시 <code>defer cancel()</code></strong> — 타임아웃이 나더라도 타이머 리소스를 해제해야 한다. 안 지키면 <code>go vet</code>이 잡아낸다 (부숴보기 1).</li>
+  </ul>
+
+  <h2>3. HTTP와의 연결 — 시청자가 나가면 ctx가 닫힌다</h2>
+  <p>이게 실무에서 context를 만나는 첫 지점이다. 핸들러의 <code>r.Context()</code>는 <strong>클라이언트가 연결을 끊는 순간 취소된다</strong> (<a href="https://gobyexample.com/context">Go by Example: Context</a>):</p>
+  <pre><code>http.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+    select {
+    case &lt;-time.After(5 * time.Second):        // 느린 세그먼트 생성 흉내
+        fmt.Fprintln(w, "세그먼트 전송 완료")
+    case &lt;-r.Context().Done():                 // 시청자 이탈
+        fmt.Println("클라이언트 이탈 감지:", r.Context().Err())
+    }
+})</code></pre>
+  <p class="expect">실측: 이 서버에 <code>curl --max-time 1</code>로 요청을 걸고 1초에 끊으면 서버 로그에 <code>클라이언트 이탈 감지: context canceled</code>가 찍힌다. 5초짜리 작업이 1초 만에 정리된 것 — 이 ctx를 트랜스코더까지 넘기면 파이프라인 전체가 함께 멈춘다.</p>
+
+  <h2>4. 실습 — 취소에 반응하는 트랜스코딩 파이프라인</h2>
+  <ol class="steps">
+    <li><code>playground/pipeline</code>을 만들고 <code>go mod init pipeline</code> 후 <code>main.go</code> 작성:
+      <pre><code>package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// transcode는 세그먼트들을 순서대로 처리해 results로 보내되,
+// ctx가 취소되면 하던 일을 버리고 즉시 리턴한다.
+func transcode(ctx context.Context, segs []string, results chan&lt;- string) {
+	defer close(results) // 생산자가 닫는다
+	for _, seg := range segs {
+		select {
+		case &lt;-time.After(600 * time.Millisecond): // 세그먼트 처리 흉내
+			results &lt;- seg + " 완료"
+		case &lt;-ctx.Done(): // 타임아웃·클라이언트 이탈
+			fmt.Println("트랜스코더 중단:", ctx.Err())
+			return
+		}
+	}
+}
+
+func main() {
+	// 이 작업 전체는 1.5초 안에 끝나야 한다고 선언
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel() // 관례: 만들었으면 반드시 defer cancel()
+
+	results := make(chan string)
+	go transcode(ctx, []string{"seg-1", "seg-2", "seg-3", "seg-4"}, results)
+
+	start := time.Now()
+	for r := range results { // 채널이 닫히면 루프 종료
+		fmt.Println(r, time.Since(start).Round(100*time.Millisecond))
+	}
+}</code></pre></li>
+    <li><code>go run .</code>
+      <p class="expect">실제 출력: <code>seg-1 완료 600ms</code> → <code>seg-2 완료 1.2s</code> → <code>트랜스코더 중단: context deadline exceeded</code>. 1.5초 시한이 seg-3 처리 중(1.8s 예정)에 걸려 나머지가 통째로 취소됐다. HTTP 데모의 <code>context canceled</code>와 사유가 다른 것에 주목 — <code>ctx.Err()</code>가 원인을 구분해 준다.</p></li>
+    <li>타임아웃을 <code>3*time.Second</code>로 늘리고 다시 실행:
+      <p class="expect">실제 출력: <code>seg-1 완료 600ms</code> ~ <code>seg-4 완료 2.4s</code> — 4개 전부 완료. 같은 코드가 시한 안에서는 끝까지, 시한 밖에서는 깨끗하게 중단된다. 확인 후 1500ms로 원상복구.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 동시성 사고 2제</h3>
+  <ol class="steps">
+    <li><code>ctx, cancel := ...</code>에서 cancel을 <code>_</code>로 버리고 <code>go vet ./...</code>
+      <p class="expect">실측: <code>the cancel function returned by context.WithTimeout should be called, not discarded, to avoid a context leak</code> — 컴파일은 되지만 vet이 잡는 리소스 누수. <code>defer cancel()</code>로 원상복구.</p></li>
+    <li>닫힌 채널은 select에서 <strong>항상 준비 상태</strong>다 — 새 파일로 확인:
+      <pre><code>ch := make(chan int)
+close(ch)
+for i := 1; i &lt;= 3; i++ {
+    select {
+    case v := &lt;-ch:
+        fmt.Printf("%d번째 수신: %d (즉시)\n", i, v)
+    case &lt;-time.After(time.Second):
+        fmt.Println("타임아웃")
+    }
+}</code></pre>
+      <p class="expect">실측: 3초 걸릴 것 같지만 0.1초 만에 <code>1~3번째 수신: 0 (즉시)</code> — 타임아웃 case는 한 번도 실행되지 않는다. 실무에서 이게 "닫힌 채널을 계속 읽는 CPU 100% 무한 루프" 사고가 된다. 탈출법(<code>v, ok</code> + nil 채널 트릭)은 <a href="../reference/select-context-cheatsheet.html">치트시트</a>에.</p></li>
+  </ol>
+  <p>한 줄 경고: 오래 도는 루프 안에서 매번 <code>time.After</code>로 새 타이머를 만드는 것은 낭비다 — 재사용이 필요하면 <code>time.NewTimer</code>(심화에서 다룬다).</p>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0010 복습이다 (간격 반복).</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://go.dev/blog/context">Go Concurrency Patterns: Context</a> (Sameer Ajmani, Go 팀 공식 블로그, 약 15분). context가 왜 이렇게 설계됐는지 — 요청 스코프·취소 전파·트리 구조를 설계자가 직접 설명한다. 가볍게는 <a href="https://gobyexample.com/context">Go by Example: Context</a>부터.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "왜 context를 struct에 넣지 말라는 거지?" 같은 설계 질문 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/select-context-cheatsheet.html">select·context 치트시트</a> · <a href="../reference/concurrency-cheatsheet.html">동시성 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0010-http-server.html">레슨 0010</a></p>
+    <p>다음 레슨 예고: <a href="0012-mutex-and-race.html">공유 상태와 레이스 디텍터</a> — 채널로 안 되는 곳에서 sync.Mutex를 쓰는 법, 그리고 <code>-race</code>가 잡아주는 것.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) JSON 인코딩 시 struct 필드가 출력에서 빠졌다. 가장 흔한 원인은?",
+      choices: ["json 태그 이름이 겹쳐서", "필드 값이 zero value여서", "필드 타입이 포인터여서", "필드가 소문자로 시작해서"],
+      answer: 3,
+      explain: "encoding/json은 다른 패키지이므로 unexported(소문자 시작) 필드에 접근할 수 없다. 대문자로 바꾸고 json 태그로 출력 이름을 정한다 (레슨 0010)."
+    },
+    {
+      q: "select에서 두 case가 동시에 준비되면?",
+      choices: ["위에 쓴 case가 실행된다", "무작위로 하나가 실행된다", "둘 다 순서대로 실행된다", "컴파일 에러가 발생한다"],
+      answer: 1,
+      explain: "무작위 선택이다 — 한쪽 채널만 계속 선택되는 기아(starvation)를 막기 위한 의도적 설계. 순서에 의존하는 코드를 쓰면 안 된다."
+    },
+    {
+      q: "ctx.Done()이 돌려주는 것은?",
+      choices: ["취소 여부를 담은 bool", "취소 사유를 담은 error", "취소되면 닫히는 채널", "취소를 실행하는 함수"],
+      answer: 2,
+      explain: "닫히는 채널이다. 닫힌 채널 수신은 즉시 리턴하므로 select의 case로 바로 쓸 수 있다. 사유는 ctx.Err()가 준다."
+    },
+    {
+      q: "WithTimeout이 돌려준 cancel 함수의 올바른 처리는?",
+      choices: ["defer cancel()로 반드시 호출", "타임아웃 나면 호출 생략 가능", "취소할 일 있을 때만 호출", "GC가 정리하므로 무시 가능"],
+      answer: 0,
+      explain: "시한이 지나 이미 취소됐더라도 타이머 리소스 해제를 위해 반드시 호출한다. 버리면 go vet의 lostcancel 검사가 context leak으로 잡는다."
+    }
+  ]);
+</script>

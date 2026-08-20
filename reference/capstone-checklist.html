@@ -1,0 +1,44 @@
+<meta charset="utf-8">
+<title>캡스톤 자가 채점표 — 스트림 게이트웨이</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Checklist</p>
+  <h1>캡스톤 자가 채점표 — 스트림 게이트웨이</h1>
+  <p class="lede"><a href="../lessons/0013-capstone-stream-gateway.html">레슨 0013</a>을 마친 뒤 인쇄해 놓고 하나씩 체크. 전부 ☑︎이면 기초·실전 아크 졸업이다.</p>
+
+  <h2>기능 체크리스트</h2>
+  <table>
+    <tr><th></th><th>항목</th><th>확인 방법</th></tr>
+    <tr><td>☐</td><td><code>POST /streams</code>가 201 + 생성된 스트림 JSON을 반환</td><td>curl -X POST + <code>-w "%{http_code}"</code></td></tr>
+    <tr><td>☐</td><td>잘못된 본문(빈 name, segments 0)에 400</td><td><code>-d '{"name":""}'</code></td></tr>
+    <tr><td>☐</td><td><code>GET /streams</code> 목록 / <code>GET /streams/{id}</code> 단건</td><td>curl 두 번</td></tr>
+    <tr><td>☐</td><td>없는 ID에 404 (200 + 빈 객체가 아니라)</td><td><code>/streams/s999</code></td></tr>
+    <tr><td>☐</td><td>등록 직후 <code>segments: 0</code> → 잠시 후 <code>/stats</code>에 처리 수 반영 (비동기 처리 증거)</td><td>sleep 1 후 <code>/stats</code></td></tr>
+    <tr><td>☐</td><td>Ctrl-C 시 "워커 종료" 로그가 워커 수만큼 찍히고 프로세스가 스스로 끝남</td><td><code>kill -INT</code> 후 로그·<code>ps</code></td></tr>
+  </table>
+
+  <h2>품질 체크리스트</h2>
+  <table>
+    <tr><th></th><th>항목</th><th>근거 레슨</th></tr>
+    <tr><td>☐</td><td><code>go vet ./...</code> 출력 없음</td><td><a href="go-toolchain-cheatsheet.html">툴체인</a></td></tr>
+    <tr><td>☐</td><td><code>go test -race ./...</code> 통과 — 동시성 테스트(고루틴 100개) 포함</td><td><a href="../lessons/0012-mutex-and-race.html">0012</a></td></tr>
+    <tr><td>☐</td><td>store 테스트가 테이블 드리븐 + <code>t.Run</code> 서브테스트</td><td><a href="../lessons/0009-testing.html">0009</a></td></tr>
+    <tr><td>☐</td><td>store가 잠금 밖으로 내부 포인터를 유출하지 않음 (복사본 반환)</td><td><a href="../lessons/0012-mutex-and-race.html">0012</a></td></tr>
+    <tr><td>☐</td><td>모든 <code>context.WithTimeout</code>에 <code>defer cancel()</code></td><td><a href="../lessons/0011-select-and-context.html">0011</a></td></tr>
+    <tr><td>☐</td><td>도메인 패키지가 <code>internal/</code> 아래 — <code>cmd/</code>에는 조립만</td><td><a href="../lessons/0008-packages-and-layout.html">0008</a></td></tr>
+    <tr><td>☐</td><td>워커가 <code>select</code>로 ctx.Done()과 Jobs를 동시에 대기 (busy loop 없음)</td><td><a href="../lessons/0011-select-and-context.html">0011</a></td></tr>
+  </table>
+
+  <h2>리뷰어라면 지적할 것 — 스스로에게 먼저</h2>
+  <ul>
+    <li><strong>에러 응답 형식이 일관적인가?</strong> 지금은 텍스트(<code>http.Error</code>) — 실서비스라면 JSON 에러 바디로 통일할 것.</li>
+    <li><strong>종료 시 큐에 남은 작업은?</strong> 현재 설계는 ctx 취소 시 채널에 남은 Job을 버린다. 유실이 허용되는가? 아니라면 close 후 드레인 패턴으로.</li>
+    <li><strong>Jobs 채널이 가득 차면?</strong> 버퍼 64가 차면 POST 핸들러가 블록된다 — 요청 지연으로 전파된다. 타임아웃 또는 거절(429) 정책 후보.</li>
+    <li><strong>뮤텍스 경합</strong> — Totals가 전체 맵을 순회하며 잠금을 잡는다. 스트림이 수만 개면? (카운터 분리 후보)</li>
+    <li><strong>테스트가 store에만 있다</strong> — worker와 핸들러는? (핸들러 테스트는 <code>httptest</code> — <a href="../lessons/0009-testing.html">0009</a> 참조)</li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>관련: <a href="../lessons/0013-capstone-stream-gateway.html">레슨 0013 (캡스톤)</a> · <a href="sync-race-cheatsheet.html">sync·race 치트시트</a> · <a href="select-context-cheatsheet.html">select·context 치트시트</a> · <a href="http-json-cheatsheet.html">http·json 치트시트</a></p>
+  </footer>
+</main>

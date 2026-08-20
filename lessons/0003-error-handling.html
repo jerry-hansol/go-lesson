@@ -1,0 +1,162 @@
+<meta charset="utf-8">
+<title>레슨 0003 — 에러 처리</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0003 · Go 기초</p>
+  <h1>에러 처리 — 예외 없는 언어에서 사는 법</h1>
+  <p class="lede">Go에는 try/catch가 없다. 레슨 0002의 다중 반환이 여기서 진가를 발휘한다: 에러는 던지는(throw) 게 아니라 <strong>반환하는 값</strong>이다. 예상 소요: 35–40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>해상도 문자열 파서를 <code>(값, error)</code> 관례로 작성하고, <code>%w</code> 래핑이 <code>errors.Is</code> 검사를 가능하게 하는 이유를 설명할 수 있다.</p>
+  </div>
+
+  <h2>1. 에러는 값이다</h2>
+  <p><code>error</code>는 특별한 문법이 아니라 그냥 타입이다(정확히는 메서드 하나짜리 인터페이스 — 인터페이스 자체는 레슨 0006에서). 실패할 수 있는 함수는 마지막 반환값으로 <code>error</code>를 돌려주고, 성공이면 <code>nil</code>을 준다:</p>
+  <pre><code>w, h, err := parseResolution("1920x1080")
+if err != nil {
+    // 처리하거나, 감싸서 위로 반환하거나
+    return err
+}
+// 여기부터는 성공 경로 — 들여쓰기가 깊어지지 않는다</code></pre>
+  <table>
+    <tr><th>Java</th><th>Go</th></tr>
+    <tr><td><code>throw</code> / <code>try-catch</code> — 에러가 별도의 제어 흐름</td><td>에러가 반환값 — 일반 코드와 같은 흐름</td></tr>
+    <tr><td>checked exception을 컴파일러가 강제</td><td>강제는 없지만, 받은 <code>err</code>를 안 쓰면 컴파일 에러 → 사실상 무시 불가</td></tr>
+    <tr><td>스택 트레이스로 원인 추적</td><td>래핑 체인(<code>%w</code>)으로 원인 추적</td></tr>
+  </table>
+  <p>이 <code>if err != nil { return }</code> <strong>조기 반환</strong>이 Go 코드의 표준 리듬이다. MediaMTX 같은 코드베이스를 열면 이 패턴이 페이지마다 보일 것이다 (<a href="https://go.dev/blog/errors-are-values">Errors are values — Rob Pike</a>).</p>
+
+  <h2>2. 에러 만들기 · 감싸기 · 검사하기</h2>
+  <pre><code>errors.New("스트림이 이미 종료됨")            // 고정 메시지 에러
+fmt.Errorf("세션 %d 없음", id)                // 포맷 에러
+fmt.Errorf("가로 값 파싱 실패: %w", err)       // ★ %w — 원인 에러를 안에 보존(래핑)
+
+errors.Is(err, strconv.ErrSyntax)             // 래핑 체인 어딘가에 이 에러가 있나?</code></pre>
+  <p>핵심은 <code>%w</code>다. <code>%v</code>로 포맷하면 원인 에러가 <em>문자열로 녹아버려서</em> <code>errors.Is</code>가 찾지 못한다. <code>%w</code>로 감싸면 체인이 유지되어, 몇 단계를 거쳐 올라온 에러라도 "원인이 문법 오류였나?"를 물을 수 있다 (<a href="https://gobyexample.com/errors">Go by Example: Errors</a>).</p>
+
+  <h2>3. defer — 정리는 열자마자 예약한다</h2>
+  <p>Java의 try-with-resources 역할. <code>defer</code>로 등록한 호출은 <strong>함수가 리턴하기 직전</strong>에 실행되므로, 자원을 연 직후에 닫기를 예약해 두면 어떤 경로로 리턴하든 정리가 보장된다:</p>
+  <pre><code>func process() {
+    fmt.Println("스트림 열기")
+    defer fmt.Println("스트림 닫기 (defer)")
+    defer fmt.Println("버퍼 비우기 (defer)")
+    fmt.Println("처리 중...")
+}</code></pre>
+  <pre><code>스트림 열기
+처리 중...
+버퍼 비우기 (defer)
+스트림 닫기 (defer)</code></pre>
+  <p>여러 개는 역순(LIFO)으로 실행된다 — 나중에 연 것부터 닫는다. 한 가지 함정: <strong>defer의 인자는 defer 문을 만난 시점에 평가</strong>된다(치트시트에 검증 예제 있음).</p>
+
+  <h2>4. 실습 — 해상도 파서</h2>
+  <ol class="steps">
+    <li><code>playground/errors</code>를 만들고 <code>go mod init errors-practice</code> 후 <code>main.go</code> 작성:
+      <pre><code>package main
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// parseResolution은 "1920x1080" 형태의 문자열을 파싱해
+// 가로, 세로 픽셀 수를 반환한다.
+func parseResolution(s string) (int, int, error) {
+	parts := strings.Split(s, "x")
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("해상도 형식이 아님: %q", s)
+	}
+	w, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("가로 값 파싱 실패: %w", err)
+	}
+	h, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("세로 값 파싱 실패: %w", err)
+	}
+	return w, h, nil
+}
+
+// check는 입력 하나를 파싱해 결과 또는 에러를 출력한다.
+func check(in string) {
+	w, h, err := parseResolution(in)
+	if err != nil {
+		fmt.Println("에러:", err)
+		if errors.Is(err, strconv.ErrSyntax) {
+			fmt.Println("  → 원인: 숫자가 아닌 문자 (strconv.ErrSyntax)")
+		}
+		return
+	}
+	fmt.Printf("%s → 가로 %d, 세로 %d\n", in, w, h)
+}
+
+func main() {
+	check("1920x1080")
+	check("1920")
+	check("abcxdef")
+}</code></pre></li>
+    <li><code>go run .</code>
+      <p class="expect">예상 출력:</p>
+      <pre><code>1920x1080 → 가로 1920, 세로 1080
+에러: 해상도 형식이 아님: "1920"
+에러: 가로 값 파싱 실패: strconv.Atoi: parsing "abc": invalid syntax
+  → 원인: 숫자가 아닌 문자 (strconv.ErrSyntax)</code></pre>
+      <p class="expect">주목: 마지막 에러 메시지에 우리가 붙인 맥락("가로 값 파싱 실패")과 원인(<code>strconv</code>의 원본 에러)이 콜론으로 이어져 있다 — 이게 래핑 체인의 생김새다.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 세 가지</h3>
+  <ol class="steps">
+    <li><code>check</code> 안을 <code>w, h := parseResolution(in)</code>으로 바꿔(err 빼고) <code>go run .</code>
+      <p class="expect">예상: <code>assignment mismatch: 2 variables but parseResolution returns 3 values</code> — 에러 반환값을 "몰래 안 받는" 것 자체가 불가능하다. 원상복구.</p></li>
+    <li>이번엔 <code>err</code>는 받되 <code>if err != nil</code> 블록을 통째로 지우고 실행.
+      <p class="expect">예상: <code>declared and not used: err</code> — 받아놓고 무시하는 것도 컴파일 에러. Java의 삼켜진 예외(swallowed exception)가 Go에선 문법적으로 어렵다. 원상복구.</p></li>
+    <li><code>parseResolution</code>의 <code>%w</code> 두 개를 <code>%v</code>로 바꾸고 실행.
+      <p class="expect">예상: 에러 메시지는 겉보기에 똑같지만 <code>→ 원인: ...</code> 줄이 사라진다 — 래핑 체인이 끊겨 <code>errors.Is</code>가 <code>strconv.ErrSyntax</code>를 못 찾는 것. <code>%w</code>와 <code>%v</code>의 차이가 이 한 줄이다. 원상복구 후 <code>go fmt ./...</code>.</p></li>
+  </ol>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0002 복습이다.</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://go.dev/blog/errors-are-values">Errors are values — Rob Pike (Go 공식 블로그)</a> (약 10분). "에러는 값이므로 프로그래밍할 수 있다"는 오늘 레슨의 철학적 원본. 짧은 실전 예제는 <a href="https://gobyexample.com/errors">Go by Example: Errors</a>와 <a href="https://gobyexample.com/defer">Defer</a>.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "panic은 그럼 언제 쓰나?" 같은 질문도 환영입니다 (짧은 답: 거의 안 씁니다 — 자세한 건 물어보시면).</p>
+    <p>참고 문서: <a href="../reference/errors-cheatsheet.html">에러 처리 치트시트</a> · <a href="../reference/syntax-basics.html">문법 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0002-variables-types-functions.html">레슨 0002</a> · 다음: <a href="0004-slices-and-maps.html">레슨 0004</a></p>
+    <p>다음 레슨 예고: 슬라이스·맵 — Go의 컬렉션, 그리고 ArrayList 반사신경이 배신당하는 지점.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) 함수의 반환값 두 개 중 하나만 필요할 때는?",
+      choices: ["_ 로 받아서 버린다", "받는 변수를 생략한다", "받고 사용하지 않는다", "null 변수로 받는다"],
+      answer: 0,
+      explain: "블랭크 식별자 _ 로 명시적으로 버린다. '받고 방치'는 declared and not used 컴파일 에러."
+    },
+    {
+      q: "Go에서 실패할 수 있는 함수의 관례적 시그니처는?",
+      choices: ["예외를 throw 한다", "(값, error)를 반환한다", "에러 코드만 반환한다", "전역 errno를 설정한다"],
+      answer: 1,
+      explain: "마지막 반환값이 error, 성공이면 nil. 에러는 별도 제어 흐름이 아니라 값이다."
+    },
+    {
+      q: "errors.Is로 원인 에러를 찾으려면 래핑할 때?",
+      choices: ["%v 동사로 포맷한다", "%s 동사로 포맷한다", "%w 동사로 래핑한다", "%e 동사로 래핑한다"],
+      answer: 2,
+      explain: "%w만이 원인 에러를 체인에 보존한다. %v/%s는 문자열로 녹여버려 errors.Is가 못 찾는다."
+    },
+    {
+      q: "defer로 등록한 호출이 실행되는 시점은?",
+      choices: ["등록한 그 즉시 실행", "프로그램 종료할 때", "GC가 수거하는 시점", "함수가 리턴하기 직전"],
+      answer: 3,
+      explain: "감싼 함수가 리턴하기 직전, 여러 개면 역순(LIFO). 인자는 defer 문을 만난 시점에 평가된다."
+    }
+  ]);
+</script>

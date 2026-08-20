@@ -1,0 +1,251 @@
+<meta charset="utf-8">
+<title>Go 용어집</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Glossary</p>
+  <h1>Go 용어집</h1>
+  <p class="lede">레슨에서 확정한 용어와 정의. 모든 레슨은 이 용어집의 어휘를 따른다. 새 용어는 첫 등장 레슨과 함께 추가된다.</p>
+
+  <dl class="glossary">
+    <dt id="package">패키지 (package)</dt>
+    <dd>Go 코드의 기본 묶음 단위. 같은 디렉토리의 <code>.go</code> 파일들은 같은 패키지에 속한다. Java의 package와 달리 <em>디렉토리 = 패키지</em>가 강제된다.
+      <span class="src">— <a href="../lessons/0001-first-go-program.html">레슨 0001</a></span></dd>
+
+    <dt id="main-package">main 패키지 / main 함수</dt>
+    <dd>실행 바이너리의 진입점. <code>package main</code>을 선언한 패키지의 <code>func main()</code>에서 프로그램이 시작한다. Java의 <code>public static void main</code>에 해당하지만 클래스가 없다.
+      <span class="src">— <a href="../lessons/0001-first-go-program.html">레슨 0001</a></span></dd>
+
+    <dt id="module">모듈 (module)</dt>
+    <dd>버전 관리·배포의 단위. 여러 패키지를 담는 트리이며, 루트의 <code>go.mod</code> 파일로 정의된다. Java의 Maven/Gradle 프로젝트에 대응하지만 설정이 훨씬 가볍다.
+      <span class="src">— <a href="../lessons/0001-first-go-program.html">레슨 0001</a></span></dd>
+
+    <dt id="gomod">go.mod</dt>
+    <dd>모듈의 이름(모듈 경로), 요구 Go 버전, 의존성 목록을 기록하는 파일. <code>go mod init &lt;이름&gt;</code>으로 생성한다.
+      <span class="src">— <a href="../lessons/0001-first-go-program.html">레슨 0001</a></span></dd>
+
+    <dt id="gofmt">gofmt</dt>
+    <dd>공식 코드 포매터. 포맷 스타일 논쟁을 언어 차원에서 종결했다 — 모든 Go 코드는 <code>gofmt</code> 출력 그대로 쓴다. <code>go fmt ./...</code>로 실행.
+      <span class="src">— <a href="../lessons/0001-first-go-program.html">레슨 0001</a></span></dd>
+
+    <dt id="static-binary">정적 바이너리 (static binary)</dt>
+    <dd><code>go build</code>가 만드는, 런타임(JVM 같은 것) 없이 단독 실행되는 하나의 실행 파일. 컨테이너 이미지가 작아지고 배포가 단순해진다 — 미디어 서버들이 Go를 택하는 이유 중 하나.
+      <span class="src">— <a href="../lessons/0001-first-go-program.html">레슨 0001</a></span></dd>
+
+    <dt id="gopath">GOPATH</dt>
+    <dd>모듈 도입(Go 1.11+) 이전의 소스 배치 방식. 오래된 글에서만 만나는 과거 유물 — 지금은 신경 쓰지 않아도 된다.
+      <span class="src">— <a href="../lessons/0001-first-go-program.html">레슨 0001</a></span></dd>
+    <dt id="zero-value">zero value</dt>
+    <dd>선언만 하고 초기화하지 않은 변수가 갖는 타입별 기본값 — 숫자는 <code>0</code>, 문자열은 <code>""</code>, 불리언은 <code>false</code>. Go에는 "초기화 안 된 변수" 상태가 없다.
+      <span class="src">— <a href="../lessons/0002-variables-types-functions.html">레슨 0002</a></span></dd>
+
+    <dt id="short-decl">짧은 변수 선언 (:=)</dt>
+    <dd>함수 안에서 선언과 초기화를 한 번에 하는 문법. 타입은 초기값에서 추론. 패키지 레벨(함수 밖)에서는 쓸 수 없다.
+      <span class="src">— <a href="../lessons/0002-variables-types-functions.html">레슨 0002</a></span></dd>
+
+    <dt id="conversion">타입 변환 (conversion)</dt>
+    <dd><code>T(v)</code> 형태의 명시적 변환. Go에는 Java 같은 암묵적 숫자 승격이 없어, 타입이 다르면 연산이 컴파일 에러가 된다.
+      <span class="src">— <a href="../lessons/0002-variables-types-functions.html">레슨 0002</a></span></dd>
+
+    <dt id="multi-return">다중 반환 (multiple return values)</dt>
+    <dd>함수가 값을 여러 개 반환하는 기능. <code>(값, error)</code> 에러 처리 관례의 토대가 된다.
+      <span class="src">— <a href="../lessons/0002-variables-types-functions.html">레슨 0002</a></span></dd>
+
+    <dt id="blank">블랭크 식별자 (_)</dt>
+    <dd>값을 받되 버리는 자리표시자. 안 쓰는 변수가 컴파일 에러이기 때문에, 필요 없는 반환값은 <code>_</code>로 명시적으로 버린다.
+      <span class="src">— <a href="../lessons/0002-variables-types-functions.html">레슨 0002</a></span></dd>
+    <dt id="error">error 인터페이스</dt>
+    <dd>실패를 나타내는 내장 타입. 특별한 문법이 아니라 메서드 하나(<code>Error() string</code>)짜리 인터페이스 값이며, 성공은 <code>nil</code>로 표현한다.
+      <span class="src">— <a href="../lessons/0003-error-handling.html">레슨 0003</a></span></dd>
+
+    <dt id="value-error">(값, error) 관례</dt>
+    <dd>실패할 수 있는 함수가 마지막 반환값으로 error를 돌려주는 Go의 표준 시그니처. 호출부는 <code>if err != nil</code> 조기 반환으로 처리한다.
+      <span class="src">— <a href="../lessons/0003-error-handling.html">레슨 0003</a></span></dd>
+
+    <dt id="error-wrap">에러 래핑 (%w)</dt>
+    <dd><code>fmt.Errorf("맥락: %w", err)</code>로 원인 에러를 체인에 보존하며 맥락을 붙이는 것. <code>%v</code>는 문자열로 녹여 체인을 끊는다.
+      <span class="src">— <a href="../lessons/0003-error-handling.html">레슨 0003</a></span></dd>
+
+    <dt id="errors-is">errors.Is</dt>
+    <dd>래핑 체인 어딘가에 특정 에러가 있는지 검사하는 표준 함수. sentinel 에러 비교에 쓴다.
+      <span class="src">— <a href="../lessons/0003-error-handling.html">레슨 0003</a></span></dd>
+
+    <dt id="defer">defer</dt>
+    <dd>함수가 리턴하기 직전에 실행되도록 호출을 예약하는 문. 자원을 연 직후 닫기를 예약하는 정리 관례(Java try-with-resources 대응). 여러 개는 역순(LIFO), 인자는 defer 문 시점에 평가.
+      <span class="src">— <a href="../lessons/0003-error-handling.html">레슨 0003</a></span></dd>
+
+    <dt id="slice">슬라이스 (slice)</dt>
+    <dd>배열을 가리키는 (포인터, len, cap) 세 값짜리 창(view). 슬라이싱(<code>s[1:3]</code>)은 복사가 아니라 같은 배열 공유. Java ArrayList의 자리를 차지하지만 내부가 훤히 보인다.
+      <span class="src">— <a href="../lessons/0004-slices-and-maps.html">레슨 0004</a></span></dd>
+
+    <dt id="append">append</dt>
+    <dd>슬라이스에 값을 추가하는 내장 함수. cap을 넘기면 더 큰 배열로 복사하므로 <strong>반환값을 반드시 다시 받는다</strong> (<code>s = append(s, x)</code>).
+      <span class="src">— <a href="../lessons/0004-slices-and-maps.html">레슨 0004</a></span></dd>
+
+    <dt id="map">맵 (map)</dt>
+    <dd>해시맵. 쓰기 전에 <code>make</code>가 필수(nil 맵 쓰기는 panic). 없는 키 읽기는 에러가 아니라 zero value. range 순회 순서는 의도적으로 무작위.
+      <span class="src">— <a href="../lessons/0004-slices-and-maps.html">레슨 0004</a></span></dd>
+
+    <dt id="comma-ok">comma ok 관용구</dt>
+    <dd><code>v, ok := m[k]</code> — 값과 "존재 여부"를 함께 받는 관용구. zero value 때문에 "값이 0인 키"와 "없는 키"를 구분하는 유일한 방법.
+      <span class="src">— <a href="../lessons/0004-slices-and-maps.html">레슨 0004</a></span></dd>
+
+    <dt id="for-range">for range</dt>
+    <dd>Go의 유일한 루프 <code>for</code>의 컬렉션 순회 형태. 슬라이스는 (인덱스, 값), 맵은 (키, 값)을 준다. while도 for로 쓴다.
+      <span class="src">— <a href="../lessons/0004-slices-and-maps.html">레슨 0004</a></span></dd>
+
+    <dt id="nil">nil</dt>
+    <dd>포인터·슬라이스·맵 등 참조류 타입의 zero value. 타입마다 관대함이 다르다 — nil 슬라이스는 append 가능, nil 맵은 쓰기 panic.
+      <span class="src">— <a href="../lessons/0004-slices-and-maps.html">레슨 0004</a></span></dd>
+
+    <dt id="struct">구조체 (struct)</dt>
+    <dd>필드를 묶는 값 타입. 클래스와 달리 상속·생성자·getter/setter가 없고, zero value 상태로 즉시 사용 가능하다.
+      <span class="src">— <a href="../lessons/0005-structs-and-methods.html">레슨 0005</a></span></dd>
+
+    <dt id="pointer">포인터 (pointer)</dt>
+    <dd><code>&amp;</code>로 주소를 얻고 <code>*T</code> 타입으로 원본을 공유한다. Go는 대입=값 복사가 기본이라 공유가 명시적. zero value는 <code>nil</code>이며 역참조 시 panic. 포인터 연산은 없다.
+      <span class="src">— <a href="../lessons/0005-structs-and-methods.html">레슨 0005</a></span></dd>
+
+    <dt id="receiver">리시버 (receiver)</dt>
+    <dd>메서드를 타입에 붙이는 <code>func (s *Stream) Start()</code> 문법의 <code>s</code> — Java의 <code>this</code>. 상태를 수정하면 포인터 리시버가 필수이고, 하나라도 포인터면 전부 포인터로 통일한다 (<a href="https://go.dev/doc/faq#pointers_vs_values">Go FAQ</a>).
+      <span class="src">— <a href="../lessons/0005-structs-and-methods.html">레슨 0005</a></span></dd>
+
+    <dt id="new-convention">생성자 관례 (NewX)</dt>
+    <dd>언어 차원의 생성자가 없어, 초기화 로직이 필요하면 <code>NewStream(...)</code> 같은 일반 함수를 만드는 관례. zero value로 충분하면 리터럴로 끝낸다.
+      <span class="src">— <a href="../lessons/0005-structs-and-methods.html">레슨 0005</a></span></dd>
+
+    <dt id="interface">인터페이스 (interface) / 암묵적 구현</dt>
+    <dd>메서드 셋의 이름. 타입이 요구 메서드를 전부 갖추면 선언 없이 자동으로 구현된다(암묵적 구현) — Java의 <code>implements</code>가 없다. 인터페이스는 구현하는 쪽이 아니라 사용하는 쪽이 정의하는 것이 관례.
+      <span class="src">— <a href="../lessons/0006-interfaces.html">레슨 0006</a></span></dd>
+
+    <dt id="io-reader-writer">io.Reader / io.Writer</dt>
+    <dd>표준 라이브러리를 관통하는 메서드 1개짜리 인터페이스. 파일·소켓·HTTP 바디가 전부 이 둘로 통하며, 미디어 서버는 본질적으로 Reader→Writer 파이프라인이다.
+      <span class="src">— <a href="../lessons/0006-interfaces.html">레슨 0006</a></span></dd>
+
+    <dt id="stringer">fmt.Stringer</dt>
+    <dd><code>String() string</code> 메서드 하나로 이루어진 인터페이스. 이를 구현하면 <code>fmt.Println</code> 등이 그 출력을 쓴다 — Java <code>toString()</code>의 대응물.
+      <span class="src">— <a href="../lessons/0006-interfaces.html">레슨 0006</a></span></dd>
+
+    <dt id="type-assertion">타입 단언 (type assertion)</dt>
+    <dd><code>v, ok := i.(T)</code> — 인터페이스 값에서 구체 타입을 꺼낸다. <code>, ok</code> 형태는 실패를 false로 알려주고, ok 없는 형태는 실패 시 panic. Java의 instanceof+캐스팅 대응물.
+      <span class="src">— <a href="../lessons/0006-interfaces.html">레슨 0006</a></span></dd>
+
+    <dt id="goroutine">고루틴 (goroutine)</dt>
+    <dd>Go 런타임이 관리하는 초경량 실행 단위. <code>go f()</code>로 시작한다. 초기 스택이 수 KB라 수십만 개도 일상 — OS 스레드(Java Thread)와의 결정적 차이. main이 리턴하면 전부 즉시 종료된다.
+      <span class="src">— <a href="../lessons/0007-goroutines-and-channels.html">레슨 0007</a></span></dd>
+
+    <dt id="channel">채널 (channel)</dt>
+    <dd>고루틴 사이에 값을 전달하는 타입 있는 파이프. <code>make(chan T)</code>로 생성, <code>ch &lt;- v</code>로 송신, <code>&lt;-ch</code>로 수신. "통신해서 메모리를 공유하라" 철학의 구현체.
+      <span class="src">— <a href="../lessons/0007-goroutines-and-channels.html">레슨 0007</a></span></dd>
+
+    <dt id="unbuffered">unbuffered / buffered 채널</dt>
+    <dd>unbuffered(<code>make(chan T)</code>)는 송수신이 만나야 진행되는 동기화 지점. buffered(<code>make(chan T, n)</code>)는 버퍼가 찰 때까지 송신이 블록되지 않는다 — Java BlockingQueue에 대응.
+      <span class="src">— <a href="../lessons/0007-goroutines-and-channels.html">레슨 0007</a></span></dd>
+
+    <dt id="close-range">close와 range (채널)</dt>
+    <dd><code>close(ch)</code>는 생산자가 "더 안 보낸다"를 알리는 선언. <code>for v := range ch</code>는 채널이 닫히고 소진되어야 끝난다. 닫힌 채널 송신·이중 close는 panic.
+      <span class="src">— <a href="../lessons/0007-goroutines-and-channels.html">레슨 0007</a></span></dd>
+
+    <dt id="waitgroup">sync.WaitGroup</dt>
+    <dd>고루틴 완료를 기다리는 카운터 — Java CountDownLatch에 대응. <code>Add</code>(go 띄우기 전에)·<code>defer wg.Done()</code>·<code>Wait</code> 3박자.
+      <span class="src">— <a href="../lessons/0007-goroutines-and-channels.html">레슨 0007</a></span></dd>
+
+    <dt id="deadlock">데드락 (deadlock)</dt>
+    <dd>모든 고루틴이 서로를 기다리며 멈춘 상태. Go 런타임이 감지해 <code>fatal error: all goroutines are asleep - deadlock!</code>으로 즉사시킨다. 스택의 <code>[chan send]</code> 등이 멈춘 지점을 알려준다.
+      <span class="src">— <a href="../lessons/0007-goroutines-and-channels.html">레슨 0007</a></span></dd>
+    <dt id="import-path">import 경로</dt>
+    <dd>모듈 경로 + 디렉토리 경로 (<code>mediakit/internal/segment</code>). 같은 모듈 안이면 go.mod 선언 없이 바로 import된다. 모듈 모드에서 상대 경로 import는 쓰지 않는다.
+      <span class="src">— <a href="../lessons/0008-packages-and-layout.html">레슨 0008</a></span></dd>
+
+    <dt id="internal-package">internal 패키지</dt>
+    <dd><code>internal/</code> 아래 패키지는 그 부모 트리 밖(외부 모듈)에서 import하면 컴파일 에러 — 관례가 아니라 컴파일러가 강제하는 비공개 경계. mediamtx는 코드 전부를 여기에 둔다.
+      <span class="src">— <a href="../lessons/0008-packages-and-layout.html">레슨 0008</a></span></dd>
+
+    <dt id="cmd-layout">cmd/ 레이아웃</dt>
+    <dd>바이너리 진입점을 <code>cmd/&lt;이름&gt;/main.go</code>에 두는 표준 관례. 바이너리가 여러 개면 나란히 추가하고 <code>go run ./cmd/&lt;이름&gt;</code>으로 실행한다.
+      <span class="src">— <a href="../lessons/0008-packages-and-layout.html">레슨 0008</a></span></dd>
+
+    <dt id="exported">exported / unexported</dt>
+    <dd>대문자 시작 식별자는 패키지의 public API, 소문자는 내부 전용. 밖에서 소문자 식별자는 "금지"가 아니라 <code>undefined</code> — 보이지도 않는다. 이 이분법이 Go의 캡슐화 전부다.
+      <span class="src">— <a href="../lessons/0008-packages-and-layout.html">레슨 0008</a></span></dd>
+
+    <dt id="go-test">go test</dt>
+    <dd>언어 내장 테스트 러너. <code>_test.go</code> 파일의 <code>func TestXxx(t *testing.T)</code>를 자동 발견해 실행한다 — 어노테이션·프레임워크·assert 라이브러리가 없고, 테스트는 대상 코드와 같은 패키지에 둔다.
+      <span class="src">— <a href="../lessons/0009-testing.html">레슨 0009</a></span></dd>
+
+    <dt id="table-driven">테이블 드리븐 테스트 (table-driven test)</dt>
+    <dd>케이스를 구조체 슬라이스(테이블)로 선언하고 range로 돌리는 Go 표준 테스트 패턴. 케이스 추가가 테이블 한 줄이라 유지비가 낮다. 회사 Go 컨벤션의 요구 형식.
+      <span class="src">— <a href="../lessons/0009-testing.html">레슨 0009</a></span></dd>
+
+    <dt id="t-run">t.Run 서브테스트</dt>
+    <dd>테이블의 각 케이스를 이름 있는 서브테스트로 감싸는 메서드. 실패가 케이스 단위로 보고되고 <code>-run 'Test이름/케이스명'</code>으로 하나만 골라 실행할 수 있다.
+      <span class="src">— <a href="../lessons/0009-testing.html">레슨 0009</a></span></dd>
+
+    <dt id="got-want">got / want 관례</dt>
+    <dd>테스트에서 실제 값은 <code>got</code>, 기대값은 <code>want</code>로 부르고 실패 메시지도 <code>got X, want Y</code> 순서로 쓰는 표준 어휘. <code>t.Errorf</code>는 기록 후 계속, <code>t.Fatalf</code>는 그 서브테스트 즉시 중단.
+      <span class="src">— <a href="../lessons/0009-testing.html">레슨 0009</a></span></dd>
+
+    <dt id="handlerfunc">핸들러 (http.HandlerFunc)</dt>
+    <dd>HTTP 요청을 처리하는 그냥 함수 — <code>func(w http.ResponseWriter, r *http.Request)</code>. 어노테이션 없이 이 시그니처가 Spring의 컨트롤러 메서드를 대신한다. w는 io.Writer이기도 해서 JSON Encoder가 바로 꽂힌다.
+      <span class="src">— <a href="../lessons/0010-http-server.html">레슨 0010</a></span></dd>
+
+    <dt id="servemux">ServeMux 패턴 라우팅</dt>
+    <dd>표준 라우터. Go 1.22부터 <code>"GET /streams/{id}"</code>처럼 메서드+와일드카드 패턴을 지원하고, 핸들러에서 <code>r.PathValue("id")</code>로 꺼낸다. 등록 안 된 메서드는 405 + Allow 헤더 자동 응답.
+      <span class="src">— <a href="../lessons/0010-http-server.html">레슨 0010</a></span></dd>
+
+    <dt id="struct-tag">struct 태그 (json:"...")</dt>
+    <dd>필드 뒤 백틱 문자열로 메타데이터를 붙이는 문법 — Jackson 어노테이션의 자리. <code>json:"bitrate_kbps"</code>가 JSON 키를 정하고, <code>,omitempty</code>는 zero value일 때 키를 생략한다. unexported 필드는 태그가 있어도 조용히 제외된다.
+      <span class="src">— <a href="../lessons/0010-http-server.html">레슨 0010</a></span></dd>
+
+    <dt id="json-encoder">json.Encoder / json.Decoder</dt>
+    <dd><code>json.NewEncoder(w).Encode(v)</code> / <code>json.NewDecoder(r.Body).Decode(&amp;v)</code> — io.Writer/io.Reader에 바로 직렬화·역직렬화하는 스트리밍 API. Decode의 error 반환값 확인이 잘못된 입력의 방어선.
+      <span class="src">— <a href="../lessons/0010-http-server.html">레슨 0010</a></span></dd>
+
+    <dt id="select">select</dt>
+    <dd>여러 채널 연산을 동시에 기다리는 문. 준비된 case가 실행되고, 여러 개면 <strong>무작위</strong>(기아 방지), 없으면 블록(<code>default</code>가 있으면 논블로킹). <code>time.After</code>와 조합해 타임아웃 패턴을 만든다.
+      <span class="src">— <a href="../lessons/0011-select-and-context.html">레슨 0011</a></span></dd>
+
+    <dt id="context">context.Context</dt>
+    <dd>요청 하나에 얽힌 고루틴 전부에 취소를 방송하는 트리. <code>Background()</code> 루트에서 <code>WithCancel</code>/<code>WithTimeout</code>으로 파생하며, 부모가 취소되면 자손도 취소된다. 실무 Go 함수 대부분의 첫 인자가 ctx인 이유. Java에 대응물 없음.
+      <span class="src">— <a href="../lessons/0011-select-and-context.html">레슨 0011</a></span></dd>
+
+    <dt id="done-err">ctx.Done() / ctx.Err()</dt>
+    <dd><code>Done()</code>은 취소되면 <strong>닫히는 채널</strong>(select case로 바로 사용), <code>Err()</code>는 취소 사유 — 수동·클라이언트 이탈은 <code>context.Canceled</code>, 시한 초과는 <code>context.DeadlineExceeded</code>.
+      <span class="src">— <a href="../lessons/0011-select-and-context.html">레슨 0011</a></span></dd>
+
+    <dt id="defer-cancel">defer cancel() 관례</dt>
+    <dd><code>WithCancel</code>/<code>WithTimeout</code>이 준 cancel 함수는 시한이 지났더라도 반드시 호출해 리소스를 해제한다. 버리면 <code>go vet</code>의 lostcancel 검사가 context leak으로 잡는다.
+      <span class="src">— <a href="../lessons/0011-select-and-context.html">레슨 0011</a></span></dd>
+
+    <dt id="data-race">데이터 레이스 (data race)</dt>
+    <dd>고루틴 둘 이상이 같은 메모리를 동기화 없이 접근하고 하나 이상이 쓰기인 상태. 크래시가 아니라 조용히 틀린 값을 내며, 타이밍 의존이라 재현이 어렵다.
+      <span class="src">— <a href="../lessons/0012-mutex-and-race.html">레슨 0012</a></span></dd>
+
+    <dt id="race-detector">레이스 디텍터 (-race)</dt>
+    <dd><code>go run -race</code> / <code>go test -race</code>로 켜는 내장 검출기. 레이스를 읽기/쓰기 고루틴의 파일:줄까지 짚어 보고하고 종료 코드 66을 반환한다. 오버헤드 때문에 개발·CI 전용이며, 실제 실행된 경로만 검사한다.
+      <span class="src">— <a href="../lessons/0012-mutex-and-race.html">레슨 0012</a></span></dd>
+
+    <dt id="mutex">sync.Mutex / sync.RWMutex</dt>
+    <dd>공유 상태의 자물쇠. <code>mu.Lock(); defer mu.Unlock()</code> 관례로 쓰고, 보호 대상 필드 바로 위에 선언해 구조체와 한 몸으로 묶는다. 재진입 불가 — 이중 Lock은 자기 데드락. RWMutex는 읽기 많은 워크로드용(RLock 동시 허용). Java synchronized 대응물.
+      <span class="src">— <a href="../lessons/0012-mutex-and-race.html">레슨 0012</a></span></dd>
+
+    <dt id="channel-vs-mutex">채널 vs 뮤텍스</dt>
+    <dd>소유권을 넘기는 파이프라인은 채널, 여러 고루틴이 같은 상태를 짧게 읽고 쓰면 뮤텍스. "통신해서 공유하라"는 소유권 이전 이야기지 모든 공유 상태를 채널로 바꾸라는 뜻이 아니다.
+      <span class="src">— <a href="../lessons/0012-mutex-and-race.html">레슨 0012</a></span></dd>
+
+    <dt id="graceful-shutdown">graceful shutdown</dt>
+    <dd>종료 신호를 받으면 새 요청은 거절하되 진행 중인 작업(요청·워커)은 마저 끝내고 스스로 종료하는 패턴. Go에서는 context 취소 전파 + <code>http.Server.Shutdown</code> + WaitGroup 대기의 조합으로 구현한다.
+      <span class="src">— <a href="../lessons/0013-capstone-stream-gateway.html">레슨 0013</a></span></dd>
+
+    <dt id="notify-context">signal.NotifyContext</dt>
+    <dd>OS 시그널(SIGINT/SIGTERM)이 오면 자동으로 취소되는 context를 만들어, 종료 신호를 context 세계로 번역하는 표준 함수 (<a href="https://pkg.go.dev/os/signal#NotifyContext">os/signal</a>). 반환된 stop은 defer로 호출한다.
+      <span class="src">— <a href="../lessons/0013-capstone-stream-gateway.html">레슨 0013</a></span></dd>
+
+    <dt id="interface-embedding">인터페이스 임베딩 (interface embedding)</dt>
+    <dd>인터페이스 정의 안에 다른 인터페이스 이름을 쓰면 그 메서드 셋을 통째로 포함한다 — Java 인터페이스의 <code>extends</code>에 대응. 예: mediamtx의 <code>Publisher</code>는 <code>Source</code>를 임베딩한다.
+      <span class="src">— <a href="../lessons/0014-reading-mediamtx.html">레슨 0014</a></span></dd>
+  </dl>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="go-toolchain-cheatsheet.html">Go 툴체인 치트시트</a></p>
+  </footer>
+</main>

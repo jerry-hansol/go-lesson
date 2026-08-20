@@ -1,0 +1,142 @@
+<meta charset="utf-8">
+<title>레슨 0012 — 공유 상태와 레이스</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0012 · Go 실전</p>
+  <h1>공유 상태와 레이스 — 채널만으로 다 되진 않는다</h1>
+  <p class="lede">미디어 서버의 세션 맵, 시청자 카운터 같은 공유 상태는 채널이 아니라 뮤텍스의 영역이다. 오늘은 레이스 버그를 직접 만들고, 도구로 검출하고, 수리하는 전체 사이클을 돈다. 예상 소요: 40분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>데이터 레이스를 <code>go run -race</code>로 검출하고 <code>sync.Mutex</code>로 수리할 수 있다 — <strong>재현 → 검출 → 수리</strong> 사이클을 내 손으로 한 바퀴.</p>
+  </div>
+
+  <h2>1. 데이터 레이스 — 재현이 안 되는 버그</h2>
+  <p>고루틴 둘 이상이 같은 메모리를 동기화 없이 접근하고 그중 하나라도 쓰기면 <strong>데이터 레이스</strong>다. 무서운 건 증상이다 — 크래시가 아니라 <em>조용히 틀린 값</em>이 나온다. 고루틴 100개가 <code>total++</code>를 1,000번씩 실행한 실측 결과:</p>
+  <pre><code>기대: 100000, 실제: 44265   // 1회차
+기대: 100000, 실제: 45324   // 2회차
+기대: 100000, 실제: 45091   // 3회차 — 매번 다르고, 에러도 경고도 없다</code></pre>
+  <p><code>++</code>는 읽기→더하기→쓰기 3단계라서 고루틴끼리 서로의 쓰기를 덮어쓴다. 타이밍에 의존하므로 로컬에선 멀쩡하다가 트래픽 많은 프로덕션에서만 터진다.</p>
+  <p>Go의 무기는 <a href="https://go.dev/blog/race-detector">레이스 디텍터</a>다: <code>go run -race</code> / <code>go test -race</code> 플래그 하나로 실행 중의 레이스를 검출한다. JVM에는 이런 도구가 표준 툴체인에 없다 — Java에서 외부 분석 도구로 하던 일이 Go에선 내장이다. 오버헤드(실행·메모리 수 배)가 있으니 개발·CI 전용이고 프로덕션 빌드엔 쓰지 않는다.</p>
+
+  <h2>2. sync.Mutex — 공유 상태의 자물쇠</h2>
+  <pre><code>// Store는 스트림별 시청자 수를 보관한다.
+// 뮤텍스는 보호 대상 필드 바로 위에 — 한 몸으로 묶는 관례.
+type Store struct {
+    mu      sync.Mutex
+    viewers map[string]int
+}
+
+// Add는 스트림의 시청자 수를 n만큼 더한다.
+func (s *Store) Add(stream string, n int) {
+    s.mu.Lock()
+    defer s.mu.Unlock()   // Lock 직후 defer로 예약 — 어떤 리턴 경로든 풀린다
+    s.viewers[stream] += n
+}</code></pre>
+  <ul>
+    <li><strong><code>Lock()</code> 직후 <code>defer Unlock()</code></strong> — 레슨 0003의 defer가 여기서 빛난다.</li>
+    <li>리시버는 반드시 <strong>포인터</strong>(레슨 0005 규칙의 실전 사례) — 값 리시버면 뮤텍스가 복사돼 자물쇠가 여러 개가 된다. <code>go vet</code>이 이 실수를 copylocks 검사로 잡는다.</li>
+    <li>Java <code>synchronized</code>/<code>ReentrantLock</code>에 대응하지만 Go 뮤텍스는 <strong>재진입 불가</strong> — 같은 고루틴이 두 번 Lock하면 자기 자신을 기다리다 죽는다 (부숴보기에서 직접 확인).</li>
+    <li>읽기가 쓰기보다 훨씬 잦으면 <code>sync.RWMutex</code> — <code>RLock()</code>은 여러 고루틴이 동시에 잡을 수 있다. 시청자 수 조회가 갱신보다 잦은 전형적인 케이스.</li>
+    <li>한 줄 소개만: <code>sync.Once</code>는 "딱 한 번 초기화" 보장, <code>sync/atomic</code>은 단일 정수 카운터라면 뮤텍스보다 가벼운 원자 연산.</li>
+  </ul>
+
+  <h2>3. 채널이냐 뮤텍스냐</h2>
+  <p><a href="https://go.dev/doc/effective_go#sharing">Effective Go</a>의 슬로건 — "메모리를 공유해서 통신하지 말고, 통신해서 메모리를 공유하라" — 는 <em>소유권 이전</em>에 대한 이야기다. 모든 공유 상태를 채널로 바꾸라는 뜻이 아니다.</p>
+  <table>
+    <tr><th>상황</th><th>도구</th><th>미디어 서버 예</th></tr>
+    <tr><td>데이터의 <strong>소유권을 넘기는</strong> 파이프라인</td><td>채널</td><td>세그먼트를 워커에게 전달 (레슨 0007)</td></tr>
+    <tr><td>여러 고루틴이 <strong>같은 상태를 짧게 읽고 쓰기</strong></td><td>뮤텍스</td><td>세션 맵, 시청자 카운터, 설정 캐시</td></tr>
+  </table>
+  <p>실무 미디어 서버의 세션 레지스트리는 대부분 RWMutex + 맵이다 — 채널로 짜면 오히려 복잡해진다.</p>
+
+  <h2>4. 실습 — 재현 → 검출 → 수리</h2>
+  <ol class="steps">
+    <li><code>playground/streamstore</code>를 만들고 <code>go mod init streamstore</code> (표준 라이브러리와 충돌 없는 이름 — 레슨 0005의 함정 기억). 먼저 <strong>보호 없는 버전</strong>을 작성:
+      <pre><code>package main
+
+import (
+	"fmt"
+	"sync"
+)
+
+// Store는 스트림별 시청자 수를 보관한다 — 아직 보호 장치가 없다.
+type Store struct {
+	viewers map[string]int
+}
+
+func main() {
+	s := Store{viewers: make(map[string]int)}
+	var wg sync.WaitGroup
+
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.viewers["ebay-live-42"]++ // 읽고-더하고-쓰기, 보호 없음
+		}()
+	}
+	wg.Wait()
+	fmt.Println("시청자 수:", s.viewers["ebay-live-42"])
+}</code></pre></li>
+    <li>레이스 디텍터로 실행: <code>go run -race .</code>
+      <p class="expect">예상: <code>WARNING: DATA RACE</code> 블록이 여러 개 — 각 블록이 "누가 읽었나(Read at ... by goroutine 9)"와 "직전에 누가 썼나(Previous write ... by goroutine 7)"를 <strong>파일:줄 번호까지</strong> 짚어준다 (여기선 <code>main.go:21</code>, 바로 <code>++</code> 줄). 실측 실행에서는 레이스 4건 검출 + 카운트도 <code>시청자 수: 65</code>로 틀렸고, 마지막 줄 <code>Found 4 data race(s)</code>와 함께 <code>exit status 66</code>으로 종료됐다 — fatal 크래시가 아니라 "보고 후 비정상 종료 코드"다.</p></li>
+    <li>2절의 Mutex 패턴으로 수리 — <code>Store</code>에 <code>mu sync.Mutex</code>를 넣고 <code>Add</code>/<code>Count</code> 메서드로 접근을 감싼 뒤(위 2절 코드 그대로, 생성자 <code>NewStore()</code> 포함) main에서는 <code>s.Add("ebay-live-42", 1)</code>을 호출:
+      <pre><code>go run -race .</code></pre>
+      <p class="expect">예상: <code>시청자 수: 100</code>, 경고 0건, 종료 코드 0. 실측 3회 연속 정확히 100 — 이게 수리 완료의 증거다. <code>go vet .</code>도 깨끗.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 동시성 사고 3종</h3>
+  <ol class="steps">
+    <li>수리 버전에 <code>func report(s Store)</code> 처럼 Store를 <strong>값으로</strong> 받는 함수를 추가하고 <code>go vet .</code>
+      <p class="expect">예상 (실측): <code>report passes lock by value: streamstore.Store contains sync.Mutex</code> + 호출부에도 <code>call of report copies lock value</code> — 뮤텍스 복사는 컴파일은 되지만 vet이 잡는다. 단, vet은 이 <em>실수 패턴</em>을 잡을 뿐 레이스 자체는 못 잡는다 — 레이스는 -race의 몫. 확인 후 삭제.</p></li>
+    <li>같은 고루틴에서 <code>mu.Lock()</code>을 두 번 연속 호출하고 실행:
+      <p class="expect">예상 (실측): <code>fatal error: all goroutines are asleep - deadlock!</code> + 스택에 <code>goroutine 1 [sync.Mutex.Lock]</code> — 재진입 불가라서 자기 자신을 기다리다 런타임이 즉사시킨다 (레슨 0007의 데드락 검출과 같은 메커니즘). 확인 후 삭제.</p></li>
+    <li>1단계의 보호 없는 버전을 <code>-race</code> <strong>없이</strong> <code>go run .</code>으로 실행:
+      <p class="expect">예상 (실측 3/3회): <code>fatal error: concurrent map writes</code> — 맵만큼은 런타임이 자체 검사로 잡아준다. 하지만 §1의 int 카운터(44265...)는 아무도 안 잡아줬다는 걸 기억하자 — 런타임의 맵 검사는 보너스일 뿐, 보증은 -race와 뮤텍스가 한다.</p></li>
+  </ol>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0011 복습이다 (간격 반복).</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://gobyexample.com/mutexes">Go by Example: Mutexes</a> (5분) — 오늘 실습과 똑같은 "구조체 + 뮤텍스 + 맵" 패턴의 최소 예제. 이어서 <a href="https://go.dev/blog/race-detector">Introducing the Go Race Detector</a> (Go 공식 블로그, 10분) — 디텍터의 동작 원리와 실전 검출 사례.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "우리 서비스의 이 맵은 채널로 짜야 하나 뮤텍스로 짜야 하나" 같은 실전 질문 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/sync-race-cheatsheet.html">동기화·레이스 치트시트</a> · <a href="../reference/concurrency-cheatsheet.html">동시성 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0011-select-and-context.html">레슨 0011</a></p>
+    <p>다음 레슨 예고: <a href="0013-capstone-stream-gateway.html">캡스톤</a> — 배운 전부를 모아 미니 스트림 게이트웨이를 만든다.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) 취소가 전파될 때 하위 고루틴이 그것을 알아채는 표준 통로는?",
+      choices: ["ctx.Value() 값을 조회한다", "ctx.Err()를 주기 폴링한다", "ctx.Done() 채널이 닫힌다", "panic이 위로 전파돼 온다"],
+      answer: 2,
+      explain: "취소되면 ctx.Done() 채널이 닫히고, select로 이를 수신해 정리 후 리턴하는 것이 관례다. Err()는 닫힌 뒤 이유 확인용."
+    },
+    {
+      q: "데이터 레이스를 실행 중에 확실히 검출하는 방법은?",
+      choices: ["go run -race로 실행한다", "go vet으로 정적 분석한다", "go fmt으로 검사를 돌린다", "go build를 다시 돌려본다"],
+      answer: 0,
+      explain: "레이스 디텍터(-race)가 실행 중의 비동기화 접근을 검출한다. vet은 뮤텍스 복사 같은 실수 패턴만 잡고 레이스 자체는 못 잡는다."
+    },
+    {
+      q: "Lock을 건 직후에 관례적으로 하는 일은?",
+      choices: ["sync.Once로 감싸 둔다", "고루틴을 하나 더 띄운다", "RWMutex로 업그레이드한다", "defer로 Unlock을 예약한다"],
+      answer: 3,
+      explain: "mu.Lock(); defer mu.Unlock() — 어떤 리턴 경로로 나가든 반드시 풀리게 만드는 관례다."
+    },
+    {
+      q: "고루틴 여럿이 같은 맵 카운터를 갱신할 때 알맞은 도구는?",
+      choices: ["채널 — 소유권을 넘기니까", "뮤텍스 — 공유 상태 보호니까", "atomic — 맵도 원자적이니까", "WaitGroup — 완료를 기다리니까"],
+      answer: 1,
+      explain: "공유 상태를 짧게 읽고 쓰는 건 뮤텍스의 영역. 채널은 소유권 이전 파이프라인에, atomic은 단일 정수에, WaitGroup은 완료 대기에 쓴다."
+    }
+  ]);
+</script>

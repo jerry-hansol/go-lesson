@@ -1,0 +1,173 @@
+/* learn-go 공용 스타일시트 — 모든 레슨·레퍼런스 문서가 이 파일을 링크한다 */
+
+:root {
+  --bg: #fffdf7;
+  --ink: #22201c;
+  --muted: #6f6759;
+  --accent: #007d9c;      /* Go 브랜드 계열 틸 */
+  --accent-ink: #00566b;
+  --code-bg: #f5f1e8;
+  --border: #e6dfd2;
+  --good: #1e7d3c;
+  --good-bg: #e9f5ec;
+  --bad: #b3261e;
+  --bad-bg: #fbeae9;
+  --win-bg: #eef6f8;
+  --win-border: #cfe4ea;
+}
+
+* { box-sizing: border-box; }
+
+html { font-size: 17px; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", "Segoe UI", sans-serif;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 3rem 1.5rem 5rem;
+}
+
+/* ── 헤더 ───────────────────────────────── */
+.kicker {
+  letter-spacing: .14em;
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+h1 {
+  font-size: 2rem;
+  line-height: 1.3;
+  margin: .4rem 0 .5rem;
+  letter-spacing: -.01em;
+}
+
+h2 {
+  font-size: 1.3rem;
+  margin-top: 2.8rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--border);
+}
+
+h3 { font-size: 1.05rem; margin-top: 1.8rem; }
+
+.lede { color: var(--muted); font-size: 1.02rem; margin-top: 0; }
+
+/* ── 본문 요소 ──────────────────────────── */
+a {
+  color: var(--accent-ink);
+  text-decoration-color: #b8d6de;
+  text-underline-offset: 3px;
+}
+
+code {
+  font-family: "SF Mono", Menlo, ui-monospace, monospace;
+  font-size: .86em;
+  background: var(--code-bg);
+  padding: .12em .35em;
+  border-radius: 4px;
+}
+
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  line-height: 1.55;
+}
+
+pre code { background: none; padding: 0; font-size: .84rem; }
+
+table { border-collapse: collapse; width: 100%; font-size: .92rem; margin: 1.2rem 0; }
+th, td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+/* ── 박스 (목표·원전·팁) ─────────────────── */
+.box {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  margin: 1.4rem 0;
+}
+.box .box-title {
+  font-weight: 700;
+  font-size: .78rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--accent-ink);
+  margin: 0 0 .4rem;
+}
+.box.win { background: var(--win-bg); border-color: var(--win-border); }
+.box p:last-child, .box ul:last-child { margin-bottom: 0; }
+
+/* ── 실습 단계 ──────────────────────────── */
+ol.steps { padding-left: 1.3rem; }
+ol.steps > li { margin-bottom: 1.2rem; }
+.expect { font-size: .82rem; color: var(--muted); margin: .3rem 0 0; }
+
+/* ── 퀴즈 (assets/quiz.js와 짝) ──────────── */
+.quiz-q {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  margin: 1rem 0;
+}
+.quiz-question { font-weight: 600; margin: 0 0 .7rem; }
+.quiz-choices { display: grid; gap: .5rem; }
+.quiz-choices button {
+  font: inherit;
+  font-size: .95rem;
+  text-align: left;
+  padding: .55rem .9rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+.quiz-choices button:hover { border-color: var(--accent); }
+.quiz-choices button.correct { background: var(--good-bg); border-color: var(--good); }
+.quiz-choices button.wrong { background: var(--bad-bg); border-color: var(--bad); }
+.quiz-choices button:disabled { cursor: default; opacity: 1; color: inherit; }
+.quiz-explain {
+  display: none;
+  margin: .7rem 0 0;
+  font-size: .9rem;
+  color: var(--muted);
+  border-top: 1px dashed var(--border);
+  padding-top: .6rem;
+}
+.quiz-q.answered .quiz-explain { display: block; }
+
+/* ── 용어집 ─────────────────────────────── */
+dl.glossary dt { font-weight: 700; margin-top: 1.1rem; }
+dl.glossary dd { margin-left: 0; color: var(--ink); }
+dl.glossary dd .src { font-size: .82rem; color: var(--muted); }
+
+/* ── 푸터 ───────────────────────────────── */
+footer.lesson-footer {
+  margin-top: 3.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 1.2rem;
+  font-size: .9rem;
+  color: var(--muted);
+}
+
+/* ── 인쇄 ───────────────────────────────── */
+@media print {
+  body { background: #fff; }
+  main { max-width: none; padding: 0; }
+  a { color: #000; text-decoration: none; }
+  h2 { break-after: avoid; }
+  pre { white-space: pre-wrap; }
+  .quiz-q { break-inside: avoid; }
+}

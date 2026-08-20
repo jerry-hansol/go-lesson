@@ -1,0 +1,454 @@
+<meta charset="utf-8">
+<title>레슨 0013 — 캡스톤: 미니 스트림 게이트웨이</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0013 · Go 실전 · Capstone</p>
+  <h1>캡스톤 — 미니 스트림 게이트웨이</h1>
+  <p class="lede">새 개념은 없습니다. 레슨 0002~0012의 전부를 <strong>하나의 동작하는 서비스</strong>로 조립합니다 — HTTP API, 뮤텍스 보호 저장소, 채널 기반 워커, graceful shutdown, <code>-race</code> 통과 테스트까지. 예상 소요: 60–90분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>지금까지 배운 개념만으로 스트림 등록·조회 API와 백그라운드 세그먼트 워커를 갖춘 게이트웨이를 완성하고, <code>go vet</code>·<code>go test -race</code>·graceful shutdown 3종 검증을 통과시킨다. 이게 끝나면 기초·실전 아크 졸업 — 다음은 진짜 코드베이스(mediamtx) 읽기다.</p>
+  </div>
+
+  <h2>1. 설계 한 장</h2>
+  <pre><code>HTTP 클라이언트
+   │  POST /streams · GET /streams · GET /streams/{id} · GET /stats
+   ▼
+cmd/gateway (main) ──── signal.NotifyContext ──▶ ctx (Ctrl-C → 취소)
+   │                                               │
+   ▼                                               ▼
+internal/store                 Jobs 채널      internal/worker
+뮤텍스 보호 map[string]*Stream ◀── 기록 ────  워커 고루틴 ×3 (select)</code></pre>
+  <table>
+    <tr><th>구성 요소</th><th>쓰는 개념</th><th>배운 곳</th></tr>
+    <tr><td>프로젝트 레이아웃</td><td><code>cmd/</code> + <code>internal/</code> 경계</td><td><a href="0008-packages-and-layout.html">레슨 0008</a></td></tr>
+    <tr><td><code>store</code></td><td>구조체·포인터 리시버 / 맵·comma ok / 뮤텍스·복사본 반환</td><td><a href="0005-structs-and-methods.html">0005</a> · <a href="0004-slices-and-maps.html">0004</a> · <a href="0012-mutex-and-race.html">0012</a></td></tr>
+    <tr><td><code>store</code> 테스트</td><td>테이블 드리븐 + <code>t.Run</code> + <code>-race</code></td><td><a href="0009-testing.html">0009</a> · <a href="0012-mutex-and-race.html">0012</a></td></tr>
+    <tr><td><code>worker</code></td><td>고루틴·채널·WaitGroup / <code>select</code> + context 취소</td><td><a href="0007-goroutines-and-channels.html">0007</a> · <a href="0011-select-and-context.html">0011</a></td></tr>
+    <tr><td>HTTP 핸들러</td><td>패턴 라우팅(<code>POST /streams</code>, <code>{id}</code>)·JSON 인코딩·상태 코드</td><td><a href="0010-http-server.html">0010</a></td></tr>
+    <tr><td>graceful shutdown</td><td>context 전파 + <code>defer</code> 정리</td><td><a href="0011-select-and-context.html">0011</a> · <a href="0003-error-handling.html">0003</a></td></tr>
+  </table>
+
+  <h2>2. 단계별 구현</h2>
+  <ol class="steps">
+    <li><strong>레이아웃 잡기</strong> — <code>playground/gateway</code>에서 시작:
+      <pre><code>mkdir -p playground/gateway/cmd/gateway playground/gateway/internal/store playground/gateway/internal/worker
+cd playground/gateway
+go mod init gateway</code></pre>
+      <p class="expect">예상: <code>go: creating new go.mod: module gateway</code>. <code>internal/</code> 아래 패키지는 이 모듈 밖에서 import가 금지된다 — 공개 API 경계를 컴파일러가 지켜준다 (<a href="0008-packages-and-layout.html">레슨 0008</a>).</p></li>
+
+    <li><strong><code>internal/store/store.go</code></strong> — 뮤텍스로 보호되는 저장소. 핵심 결정: 잠금 밖으로는 내부 포인터가 아니라 <strong>복사본</strong>을 내보낸다 (<a href="0012-mutex-and-race.html">레슨 0012</a>의 교훈):
+      <pre><code>package store
+
+import (
+	"fmt"
+	"sync"
+)
+
+// Stream은 게이트웨이에 등록된 스트림 하나의 상태다.
+type Stream struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	BitrateKbps int    `json:"bitrate_kbps"`
+	Segments    int    `json:"segments"` // 워커가 처리 완료한 세그먼트 수
+}
+
+// Store는 뮤텍스로 보호되는 인메모리 스트림 저장소다.
+// 모든 메서드가 잠금을 잡으므로 여러 고루틴에서 동시에 써도 안전하다.
+type Store struct {
+	mu      sync.Mutex
+	streams map[string]*Stream
+	nextID  int
+}
+
+// New는 바로 사용 가능한 빈 Store를 만든다.
+func New() *Store {
+	return &amp;Store{streams: make(map[string]*Stream)}
+}
+
+// Add는 스트림을 등록하고 ID가 부여된 복사본을 반환한다.
+func (s *Store) Add(name string, bitrateKbps int) Stream {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextID++
+	st := &amp;Stream{
+		ID:          fmt.Sprintf("s%d", s.nextID),
+		Name:        name,
+		BitrateKbps: bitrateKbps,
+	}
+	s.streams[st.ID] = st
+	return *st
+}
+
+// Get은 ID로 스트림을 찾는다. 없으면 ok=false를 돌려준다.
+// 잠금 밖에서 안전하도록 내부 포인터가 아닌 복사본을 반환한다.
+func (s *Store) Get(id string) (Stream, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.streams[id]
+	if !ok {
+		return Stream{}, false
+	}
+	return *st, true
+}
+
+// List는 등록된 모든 스트림의 복사본을 반환한다. 순서는 정해져 있지 않다.
+func (s *Store) List() []Stream {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Stream, 0, len(s.streams))
+	for _, st := range s.streams {
+		out = append(out, *st)
+	}
+	return out
+}
+
+// AddSegment는 워커가 세그먼트 하나를 처리 완료했음을 기록한다.
+func (s *Store) AddSegment(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st, ok := s.streams[id]; ok {
+		st.Segments++
+	}
+}
+
+// Totals는 (스트림 수, 처리 완료 세그먼트 합계)를 반환한다.
+func (s *Store) Totals() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	segments := 0
+	for _, st := range s.streams {
+		segments += st.Segments
+	}
+	return len(s.streams), segments
+}</code></pre>
+      <p class="expect">중간 확인: <code>go build ./...</code> — 출력 없이 끝나면 성공. (구조체·리시버 ← <a href="0005-structs-and-methods.html">0005</a>, 맵·comma ok ← <a href="0004-slices-and-maps.html">0004</a>)</p></li>
+
+    <li><strong><code>internal/store/store_test.go</code></strong> — 테이블 드리븐 + 동시성 테스트 (<a href="0009-testing.html">레슨 0009</a>):
+      <pre><code>package store
+
+import (
+	"sync"
+	"testing"
+)
+
+// TestGet은 존재/부재 케이스를 테이블로 검증한다.
+func TestGet(t *testing.T) {
+	s := New()
+	created := s.Add("cam-1", 2500)
+
+	tests := []struct {
+		name   string
+		id     string
+		wantOK bool
+	}{
+		{"존재하는 ID", created.ID, true},
+		{"없는 ID", "s999", false},
+		{"빈 ID", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ok := s.Get(tt.id)
+			if ok != tt.wantOK {
+				t.Errorf("Get(%q) ok = %v, want %v", tt.id, ok, tt.wantOK)
+			}
+		})
+	}
+}
+
+// TestAdd는 ID 부여와 필드 보존을 검증한다.
+func TestAdd(t *testing.T) {
+	s := New()
+	first := s.Add("cam-1", 2500)
+	second := s.Add("cam-2", 4000)
+
+	if first.ID == second.ID {
+		t.Errorf("ID가 중복됨: %q", first.ID)
+	}
+	got, ok := s.Get(second.ID)
+	if !ok || got.Name != "cam-2" || got.BitrateKbps != 4000 {
+		t.Errorf("Get(%q) = %+v, ok=%v", second.ID, got, ok)
+	}
+}
+
+// TestConcurrentSegments는 고루틴 100개가 동시에 세그먼트를 기록해도
+// 유실이 없는지 검증한다. -race 플래그의 주 타깃이다.
+func TestConcurrentSegments(t *testing.T) {
+	s := New()
+	st := s.Add("cam-1", 2500)
+
+	var wg sync.WaitGroup
+	for i := 0; i &lt; 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.AddSegment(st.ID)
+		}()
+	}
+	wg.Wait()
+
+	got, _ := s.Get(st.ID)
+	if got.Segments != 100 {
+		t.Errorf("Segments = %d, want 100", got.Segments)
+	}
+}</code></pre>
+      <p class="expect">실행: <code>go test -race -v ./internal/store/</code> — 실측 출력:</p>
+      <pre><code>=== RUN   TestGet
+=== RUN   TestGet/존재하는_ID
+=== RUN   TestGet/없는_ID
+=== RUN   TestGet/빈_ID
+--- PASS: TestGet (0.00s)
+=== RUN   TestAdd
+--- PASS: TestAdd (0.00s)
+=== RUN   TestConcurrentSegments
+--- PASS: TestConcurrentSegments (0.00s)
+PASS
+ok  	gateway/internal/store	1.303s</code></pre></li>
+
+    <li><strong><code>internal/worker/worker.go</code></strong> — 채널에서 작업을 받아 처리하는 워커 풀. <code>select</code>가 종료 신호와 작업을 동시에 기다린다 (<a href="0007-goroutines-and-channels.html">0007</a> + <a href="0011-select-and-context.html">0011</a>):
+      <pre><code>package worker
+
+import (
+	"context"
+	"log"
+	"sync"
+	"time"
+
+	"gateway/internal/store"
+)
+
+// Job은 워커가 처리할 세그먼트 작업 하나다.
+type Job struct {
+	StreamID string
+	Segment  int
+}
+
+// Pool은 공용 채널에서 Job을 받아 처리하는 워커 고루틴 집합이다.
+type Pool struct {
+	Jobs chan Job // 핸들러가 여기로 작업을 보낸다
+	st   *store.Store
+	wg   sync.WaitGroup
+}
+
+// New는 워커 n개를 시작해 Pool을 반환한다. ctx가 취소되면 워커들이 멈춘다.
+func New(ctx context.Context, st *store.Store, n int) *Pool {
+	p := &amp;Pool{Jobs: make(chan Job, 64), st: st}
+	for i := 1; i &lt;= n; i++ {
+		p.wg.Add(1)
+		go p.run(ctx, i)
+	}
+	return p
+}
+
+// run은 워커 하나의 본체 — 종료 신호와 작업 채널을 select로 동시에 기다린다.
+func (p *Pool) run(ctx context.Context, id int) {
+	defer p.wg.Done()
+	for {
+		select {
+		case &lt;-ctx.Done(): // graceful shutdown 신호
+			log.Printf("worker %d: 종료", id)
+			return
+		case job := &lt;-p.Jobs:
+			time.Sleep(50 * time.Millisecond) // 트랜스코딩 흉내
+			p.st.AddSegment(job.StreamID)
+			log.Printf("worker %d: %s seg-%d 처리 완료", id, job.StreamID, job.Segment)
+		}
+	}
+}
+
+// Wait는 모든 워커 고루틴이 끝날 때까지 블록한다.
+func (p *Pool) Wait() { p.wg.Wait() }</code></pre>
+      <p class="expect">중간 확인: <code>go vet ./...</code> — 출력 없음이 정상.</p></li>
+
+    <li><strong><code>cmd/gateway/main.go</code></strong> — 전부 조립. 새 API는 <code>signal.NotifyContext</code> 하나뿐이며 주석으로 설명했다 (<a href="https://pkg.go.dev/os/signal#NotifyContext">pkg.go.dev/os/signal</a>):
+      <pre><code>package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log"
+	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"gateway/internal/store"
+	"gateway/internal/worker"
+)
+
+// createRequest는 POST /streams의 요청 본문이다.
+type createRequest struct {
+	Name        string `json:"name"`
+	BitrateKbps int    `json:"bitrate_kbps"`
+	Segments    int    `json:"segments"`
+}
+
+func main() {
+	// signal.NotifyContext: Ctrl-C(SIGINT)나 SIGTERM이 오면
+	// 자동으로 취소되는 context를 만든다 — 종료 신호를 context 세계로 번역.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	st := store.New()
+	pool := worker.New(ctx, st, 3)
+
+	mux := http.NewServeMux()
+
+	// 스트림 등록 → 세그먼트 작업을 워커 채널로 전달
+	mux.HandleFunc("POST /streams", func(w http.ResponseWriter, r *http.Request) {
+		var req createRequest
+		if err := json.NewDecoder(r.Body).Decode(&amp;req); err != nil {
+			http.Error(w, "잘못된 JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Name == "" || req.Segments &lt;= 0 {
+			http.Error(w, "name과 1 이상의 segments가 필요합니다", http.StatusBadRequest)
+			return
+		}
+		created := st.Add(req.Name, req.BitrateKbps)
+		for i := 1; i &lt;= req.Segments; i++ {
+			pool.Jobs &lt;- worker.Job{StreamID: created.ID, Segment: i}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(created)
+	})
+
+	// 전체 목록
+	mux.HandleFunc("GET /streams", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(st.List())
+	})
+
+	// 단건 조회 — 없으면 404
+	mux.HandleFunc("GET /streams/{id}", func(w http.ResponseWriter, r *http.Request) {
+		s, ok := st.Get(r.PathValue("id"))
+		if !ok {
+			http.Error(w, "스트림 없음: "+r.PathValue("id"), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(s)
+	})
+
+	// 처리 통계
+	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
+		streams, segments := st.Totals()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]int{
+			"streams":       streams,
+			"segments_done": segments,
+		})
+	})
+
+	srv := &amp;http.Server{Addr: ":8080", Handler: mux}
+
+	// 서버는 별도 고루틴에서 — main 고루틴은 종료 신호를 기다린다.
+	go func() {
+		log.Println("게이트웨이 시작: http://localhost:8080")
+		if err := srv.ListenAndServe(); err != nil &amp;&amp; !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("서버 오류: %v", err)
+		}
+	}()
+
+	&lt;-ctx.Done() // Ctrl-C 대기
+	log.Println("종료 신호 수신 — graceful shutdown 시작")
+
+	// 진행 중인 요청은 5초까지 기다렸다가 서버를 닫는다.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("서버 종료 오류: %v", err)
+	}
+
+	pool.Wait() // 워커들이 ctx.Done()을 보고 멈출 때까지 대기
+	log.Println("모든 워커 종료 — 게이트웨이 정상 종료")
+}</code></pre>
+      <p class="expect">빌드: <code>go build -o gateway ./cmd/gateway</code> → 8.0MB 단일 바이너리 (실측). <code>./gateway</code> 실행 시 첫 로그: <code>게이트웨이 시작: http://localhost:8080</code></p></li>
+  </ol>
+
+  <h2>3. 검증 시나리오 — 전부 실측</h2>
+  <p>서버를 띄워두고 다른 터미널에서 순서대로. 아래 출력은 이 레슨을 만들며 실제로 실행한 결과다.</p>
+  <pre><code>$ curl -s -X POST localhost:8080/streams -d '{"name":"ebay-live-42","bitrate_kbps":2500,"segments":4}'
+{"id":"s1","name":"ebay-live-42","bitrate_kbps":2500,"segments":0}
+
+$ curl -s -X POST localhost:8080/streams -d '{"name":"cam-lobby","bitrate_kbps":4000,"segments":2}'
+{"id":"s2","name":"cam-lobby","bitrate_kbps":4000,"segments":0}
+
+$ curl -s localhost:8080/streams/s999        # 404
+스트림 없음: s999
+
+$ curl -s -X POST localhost:8080/streams -d '{"name":""}'   # 400
+name과 1 이상의 segments가 필요합니다
+
+$ sleep 1 &amp;&amp; curl -s localhost:8080/stats    # 워커가 6개를 다 처리한 뒤
+{"segments_done":6,"streams":2}</code></pre>
+  <p>등록 직후의 <code>segments</code>는 0이다가 잠시 후 <code>/stats</code>에 6이 잡히는 것 — 이게 채널로 넘긴 작업이 <em>비동기로</em> 처리되고 있다는 증거다. 서버 로그(실측):</p>
+  <pre><code>2026/08/19 22:39:33 worker 3: s1 seg-3 처리 완료
+2026/08/19 22:39:33 worker 2: s1 seg-2 처리 완료
+2026/08/19 22:39:33 worker 1: s1 seg-1 처리 완료   ← 순서 비결정적 (0007)
+...
+^C
+2026/08/19 22:39:48 종료 신호 수신 — graceful shutdown 시작
+2026/08/19 22:39:48 worker 2: 종료
+2026/08/19 22:39:48 worker 3: 종료
+2026/08/19 22:39:48 worker 1: 종료
+2026/08/19 22:39:48 모든 워커 종료 — 게이트웨이 정상 종료</code></pre>
+  <p>마지막 관문 세 개 — 모두 통과해야 완성이다 (실측: 전부 통과):</p>
+  <pre><code>go vet ./...                  # 출력 없음
+go test -race ./...           # ok  gateway/internal/store
+./gateway → Ctrl-C            # "정상 종료" 로그 후 프로세스 종료</code></pre>
+
+  <h2>4. 확장 과제 — 답 없음, 힌트만</h2>
+  <ul>
+    <li><strong><code>DELETE /streams/{id}</code></strong> — 힌트: store에 Delete 메서드 추가(맵 <code>delete</code>, <a href="0004-slices-and-maps.html">0004</a>), 없는 ID면 404. 테스트도 테이블에 한 줄 추가.</li>
+    <li><strong>워커 재시도</strong> — 힌트: Job에 <code>Attempt int</code>를 두고, "실패"(예: 세그먼트 번호가 3의 배수면 실패로 가정) 시 Attempt+1로 다시 <code>Jobs</code>에 넣기. 최대 횟수 초과 시 로그만. 닫힌 채널·꽉 찬 채널을 조심할 것 (<a href="0007-goroutines-and-channels.html">0007</a>).</li>
+    <li><strong>스트림별 통계</strong> — 힌트: <code>GET /streams/{id}/stats</code> 라우트 추가, Stream에 처리 시간 합계 필드. 뮤텍스 임계구역을 넓히지 않고 할 수 있는지가 관전 포인트 (<a href="0012-mutex-and-race.html">0012</a>).</li>
+  </ul>
+
+  <h2>5. 퀴즈 — 전 아크 복습 (인터리빙)</h2>
+  <p>네 문항이 각각 다른 레슨에서 온다. 본문을 보지 말고.</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://go.dev/doc/modules/layout">Organizing a Go module</a> (Go 공식, 약 10분) — 오늘 쓴 <code>cmd/</code>·<code>internal/</code> 레이아웃의 근거. 함께: <a href="https://pkg.go.dev/os/signal#NotifyContext">os/signal.NotifyContext</a> 문서 — 시그널을 context로 번역하는 표준 방법.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> 캡스톤은 막히는 게 정상입니다 — 어느 단계에서 무슨 에러가 났는지 알려주시면 같이 풉니다.</p>
+    <p>자가 채점: <a href="../reference/capstone-checklist.html">캡스톤 체크리스트</a> · 참고: <a href="../reference/sync-race-cheatsheet.html">sync·race</a> · <a href="../reference/select-context-cheatsheet.html">select·context</a> · <a href="../reference/http-json-cheatsheet.html">http·json</a> · <a href="../reference/glossary.html">용어집</a></p>
+    <p>이전: <a href="0012-mutex-and-race.html">레슨 0012 — 뮤텍스와 레이스</a> · 다음: <a href="0014-reading-mediamtx.html">레슨 0014 — 실코드 읽기: mediamtx 투어</a></p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(0007) 버퍼 없는 채널에 송신했는데 아무도 수신하지 않으면?",
+      choices: ["송신이 그 자리에서 블록된다", "값이 버려지고 계속 진행된다", "런타임이 버퍼를 자동 확장한다", "컴파일 단계에서 에러가 잡힌다"],
+      answer: 0,
+      explain: "unbuffered 채널은 송수신이 만나야 진행되는 동기화 지점이다. 수신자가 영영 없으면 데드락으로 이어진다."
+    },
+    {
+      q: "(0009) 테이블 드리븐 테스트에서 t.Run(tt.name, ...)을 쓰는 주된 이유는?",
+      choices: ["테스트 실행 순서를 보장하기 위해", "커버리지 수치를 올리기 위해서", "케이스별 이름으로 실패 지점 표시", "병렬 실행을 강제로 막기 위해서"],
+      answer: 2,
+      explain: "서브테스트는 실패 시 TestGet/없는_ID처럼 케이스 이름이 그대로 찍혀 어느 행이 깨졌는지 바로 보인다."
+    },
+    {
+      q: "(0011) context.WithTimeout이 돌려주는 cancel 함수는 언제 호출하나?",
+      choices: ["타임아웃이 지난 뒤에만 호출한다", "defer로 반드시 항상 호출한다", "에러가 발생한 경우에만 호출한다", "GC가 처리하므로 호출하지 않는다"],
+      answer: 1,
+      explain: "cancel은 경로와 무관하게 반드시 호출해야 내부 타이머·고루틴이 정리된다 — defer cancel()이 관례다."
+    },
+    {
+      q: "(0012) go test -race가 잡아내는 것은?",
+      choices: ["느린 테스트와 타임아웃 초과를", "메모리 누수와 고루틴 누수를", "동기화 없는 동시 메모리 접근", "데드락에 빠진 채널 송수신을"],
+      answer: 2,
+      explain: "race detector는 잠금 없이 같은 메모리에 동시 접근(하나 이상이 쓰기)하는 데이터 레이스를 실행 중에 잡는다."
+    }
+  ]);
+</script>

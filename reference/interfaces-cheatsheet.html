@@ -1,0 +1,56 @@
+<meta charset="utf-8">
+<title>Go 인터페이스 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>Go 인터페이스 치트시트</h1>
+  <p class="lede">정의·구현·단언 패턴과 설계 관례. 출처: <a href="https://gobyexample.com/interfaces">Go by Example</a>, <a href="https://go.dev/doc/effective_go#interfaces_and_types">Effective Go</a>, <a href="https://pkg.go.dev/io">pkg.go.dev/io</a>.</p>
+
+  <h2>정의와 구현</h2>
+  <pre><code>type Publisher interface {          // 정의: 메서드 셋만 나열
+    Publish(data string) error
+}
+
+type LogPublisher struct{ Prefix string }
+
+func (p LogPublisher) Publish(data string) error {  // 이 메서드가 있으면
+    ...                                             // LogPublisher는 Publisher다
+}                                                   // implements 선언 없음</code></pre>
+  <ul>
+    <li><strong>암묵적 구현</strong>: 메서드 셋이 맞으면 자동 구현. 남의 패키지 타입도 내 인터페이스를 만족할 수 있다.</li>
+    <li>포인터 리시버 메서드는 <code>*T</code>의 메서드 셋에만 들어간다 → <code>&amp;CountPublisher{}</code>처럼 포인터로 넘긴다.</li>
+    <li>구현이 안 맞으면 컴파일 에러: <code>does not implement ... (wrong type for method ...)</code> + <code>have</code>/<code>want</code> 비교.</li>
+  </ul>
+
+  <h2>표준 라이브러리의 축 — io.Reader / io.Writer</h2>
+  <pre><code>type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+type Writer interface {
+    Write(p []byte) (n int, err error)
+}</code></pre>
+  <p>파일·소켓·HTTP 바디·압축 스트림이 전부 이 둘로 통한다. 미디어 서버 = Reader→Writer 파이프라인.</p>
+
+  <h2>fmt.Stringer</h2>
+  <pre><code>func (s Stream) String() string { return fmt.Sprintf("[%s]...", ...) }
+fmt.Println(s)   // String()의 출력이 쓰인다 — Java toString() 대응</code></pre>
+
+  <h2>타입 단언</h2>
+  <table>
+    <tr><th>형태</th><th>실패 시</th><th>용도</th></tr>
+    <tr><td><code>v, ok := i.(T)</code></td><td><code>ok=false</code>, v는 zero value</td><td>실무 기본형</td></tr>
+    <tr><td><code>v := i.(T)</code></td><td><strong>panic</strong> (interface conversion)</td><td>타입이 확실할 때만</td></tr>
+    <tr><td><code>switch v := i.(type)</code></td><td>—</td><td>여러 타입 분기 (추후 레슨)</td></tr>
+  </table>
+
+  <h2>설계 관례</h2>
+  <ul>
+    <li><strong>작게</strong> — 메서드 1~2개짜리 인터페이스가 이상적. 큰 인터페이스는 냄새.</li>
+    <li><strong>사용하는 쪽에 정의</strong> — 인터페이스는 구현 패키지가 아니라 그것을 소비하는 패키지에 둔다.</li>
+    <li><strong>인터페이스를 받고, 구조체를 반환</strong> — 함수 파라미터는 인터페이스로 느슨하게, 반환은 구체 타입으로.</li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="glossary.html">용어집</a> · <a href="structs-methods-cheatsheet.html">구조체·메서드 치트시트</a> · 첫 등장: <a href="../lessons/0006-interfaces.html">레슨 0006</a></p>
+  </footer>
+</main>

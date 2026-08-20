@@ -1,0 +1,59 @@
+<meta charset="utf-8">
+<title>Go 동기화·레이스 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>동기화·레이스 치트시트</h1>
+  <p class="lede">공유 상태 보호의 최소 패턴. 출처: <a href="https://gobyexample.com/mutexes">Go by Example: Mutexes</a>, <a href="https://go.dev/blog/race-detector">Go Race Detector</a>, <a href="https://go.dev/doc/effective_go#sharing">Effective Go</a>.</p>
+
+  <h2>표준 골격 — 구조체 + 뮤텍스 + 맵</h2>
+  <pre><code>type Store struct {
+    mu      sync.Mutex        // 보호 대상 필드 바로 위에
+    viewers map[string]int
+}
+
+func (s *Store) Add(stream string, n int) {   // 반드시 포인터 리시버
+    s.mu.Lock()
+    defer s.mu.Unlock()                       // Lock 직후 defer 예약
+    s.viewers[stream] += n
+}</code></pre>
+  <ul>
+    <li>읽기 &gt;&gt; 쓰기면 <code>sync.RWMutex</code>: 읽기는 <code>RLock()/RUnlock()</code> (동시 허용), 쓰기는 <code>Lock()</code>.</li>
+    <li>Go 뮤텍스는 <strong>재진입 불가</strong> — 같은 고루틴의 이중 Lock은 자기 데드락.</li>
+    <li><code>sync.Once</code>: 딱 한 번 초기화. <code>sync/atomic</code>: 단일 정수 카운터의 경량 대안.</li>
+  </ul>
+
+  <h2>레이스 디텍터</h2>
+  <table>
+    <tr><th>명령</th><th>용도</th></tr>
+    <tr><td><code>go run -race .</code></td><td>실행하며 레이스 검출</td></tr>
+    <tr><td><code>go test -race ./...</code></td><td>테스트 전체를 레이스 검사와 함께 (CI 권장)</td></tr>
+  </table>
+  <ul>
+    <li>검출 시 <code>WARNING: DATA RACE</code> + 읽기/쓰기 고루틴의 파일:줄 스택, 종료 코드 66 (<code>Found N data race(s)</code>).</li>
+    <li>오버헤드(실행·메모리 수 배) 때문에 개발·CI 전용 — 프로덕션 빌드 금지.</li>
+    <li>실제로 <em>실행된</em> 경로의 레이스만 잡는다 — 테스트가 그 경로를 밟아야 한다.</li>
+  </ul>
+
+  <h2>채널 vs 뮤텍스 결정표</h2>
+  <table>
+    <tr><th>상황</th><th>도구</th><th>예</th></tr>
+    <tr><td>데이터 소유권을 다음 단계로 넘김</td><td>채널</td><td>세그먼트 → 워커 파이프라인</td></tr>
+    <tr><td>여러 고루틴이 같은 상태를 짧게 읽고 씀</td><td>뮤텍스</td><td>세션 맵, 시청자 카운터</td></tr>
+    <tr><td>단일 정수 하나만 증감</td><td>sync/atomic</td><td>총 요청 수 카운터</td></tr>
+    <tr><td>완료를 기다리기만 함</td><td>WaitGroup</td><td>워커 N개 join</td></tr>
+  </table>
+
+  <h2>흔한 사고 3종 (실측 메시지)</h2>
+  <table>
+    <tr><th>사고</th><th>증상</th><th>잡는 도구</th></tr>
+    <tr><td>뮤텍스 값 복사 (값 리시버/값 인자)</td><td><code>passes lock by value: ... contains sync.Mutex</code></td><td><code>go vet</code> (copylocks)</td></tr>
+    <tr><td>같은 고루틴의 이중 Lock</td><td><code>fatal error: all goroutines are asleep - deadlock!</code> + <code>[sync.Mutex.Lock]</code></td><td>런타임 즉사</td></tr>
+    <tr><td>맵 동시 쓰기 (보호 없음)</td><td><code>fatal error: concurrent map writes</code></td><td>런타임 (일부만) — 보증은 -race</td></tr>
+  </table>
+  <p>int 카운터 레이스는 위 셋과 달리 <strong>아무 메시지 없이 값만 틀린다</strong> — 그래서 -race를 CI에 상시로 거는 것이다.</p>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="concurrency-cheatsheet.html">동시성 치트시트</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0012-mutex-and-race.html">레슨 0012</a></p>
+  </footer>
+</main>
