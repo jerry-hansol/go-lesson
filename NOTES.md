@@ -11,7 +11,7 @@
 ## 환경
 - macOS (darwin/arm64), Homebrew, Go 1.26.0 (`/opt/homebrew/bin/go`)
 - 실습 코드는 워크스페이스의 `playground/<주제>/` 아래에 모은다
-- 이 디렉토리는 아직 git 저장소 아님 (2026-08-19 기준)
+- 2026-08-20: git 저장소로 전환, `git@github.com:jerry-hansol/go-lesson.git` (main). GitHub Pages로 서빙 중: https://jerry-hansol.github.io/go-lesson/ — 레슨·노트 수정 후에는 커밋·푸시해야 사이트에 반영된다
 
 ## 진행 상태
 - 2026-08-19: 워크스페이스 셋업, 레슨 0001 (첫 Go 프로그램) 발행 → 당일 완료, "짧고 쉬웠음" (LR-0002: 페이스 상향)
