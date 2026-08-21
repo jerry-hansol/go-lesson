@@ -1,0 +1,239 @@
+<meta charset="utf-8">
+<title>레슨 0017 — DataChannel과 보안 계층</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0017 · Pion·WebRTC</p>
+  <h1>DataChannel과 보안 계층 — DTLS 위의 제3의 전송</h1>
+  <p class="lede">미디어를 다루기 전에 그 아래 깔리는 두 층을 먼저 연다: 모든 것을 암호화하는 DTLS, 그리고 TCP도 UDP도 아닌 SCTP 위의 DataChannel. 예상 소요: 40–45분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>내 맥에서 DTLS로 암호화된 DataChannel을 열어 ping-pong RTT를 실측하고, 신뢰성 옵션(순서 X·재전송 0회)이 SDP 협상으로 실제 반영되는 것을 두 눈으로 확인한다.</p>
+  </div>
+
+  <h2>1. 보안은 선택이 아니다 — DTLS와 지문</h2>
+  <p>WebRTC에는 "암호화 없는 모드"가 없다. <a href="../lessons/0016-ice-nat-traversal.html">ICE(0016)</a>가 경로를 찾으면 그 위에서 곧바로 <a href="../reference/glossary.html#dtls">DTLS</a> 핸드셰이크(TLS의 UDP판)가 일어나고, 이후의 모든 것 — 데이터도 미디어도 — 이 그 열쇠로 잠긴다 (<a href="https://webrtcforthecurious.com/docs/04-securing/">WebRTC for the Curious — Securing</a>):</p>
+  <pre><code>┌───────────────┬────────────────┐
+│  DataChannel  │  미디어(Track)  │  ← 애플리케이션이 만지는 층 (Track은 0018)
+├───────────────┼────────────────┤
+│     SCTP      │      SRTP      │  ← 데이터 전송        미디어 암호화
+├───────────────┴────────────────┤
+│     DTLS  (암호화·키 합의)       │  ← 오늘의 주인공
+├────────────────────────────────┤
+│     ICE   (경로 찾기 — 0016)    │
+└────────────────────────────────┘
+              UDP</code></pre>
+  <p>재미있는 건 신뢰의 출처다. 인증서는 보통 <strong>자가서명</strong>이라 CA가 없다. 대신 인증서의 해시(지문)를 SDP의 <code>a=fingerprint</code> 라인에 실어 시그널링으로 미리 보내고, DTLS 핸드셰이크에서 받은 실제 인증서와 대조한다. 즉 <strong>시그널링 채널(실무에선 HTTPS/WSS)이 신뢰의 뿌리</strong>다 — 시그널링이 뚫리면 중간자도 가능하다. 미디어는 DTLS에서 유도한 키로 <a href="../reference/glossary.html#srtp">SRTP</a>가 암호화한다 (상세는 0018).</p>
+
+  <h2>2. DataChannel = SCTP over DTLS</h2>
+  <p>임의의 바이트를 P2P로 보내는 <a href="../reference/glossary.html#datachannel-sctp">DataChannel</a>은 TCP(신뢰·순서 보장이지만 하나 막히면 전부 대기)도 UDP(아무 보장 없음)도 아닌 제3의 선택 — <strong>SCTP를 DTLS 위에 태운 것</strong>이다 (<a href="https://webrtcforthecurious.com/docs/07-data-communication/">Data Communication</a>). SCTP를 고른 이유는 두 가지다: 한 연결에 독립적인 스트림 여러 개(채널 하나가 막혀도 다른 채널은 진행), 그리고 <strong>스트림마다 신뢰성을 골라 설정</strong>할 수 있다는 것.</p>
+  <p>이 계층 구조는 pion에서 상상이 아니라 <strong>모듈 목록 그 자체</strong>다. <code>go get github.com/pion/webrtc/v4</code> 하나로 끌려온 의존성이 프로토콜 스택을 그대로 비춘다:</p>
+  <pre><code>$ grep pion go.sum | grep -o 'github.com/pion/[a-z0-9/]*' | sort -u
+github.com/pion/datachannel     ← 오늘
+github.com/pion/dtls/v3         ← 오늘
+github.com/pion/ice/v4          ← 0016
+github.com/pion/rtp             ← 0018 예고
+github.com/pion/sctp            ← 오늘
+github.com/pion/sdp/v3          ← 0015
+github.com/pion/srtp/v3         ← 0018 예고
+github.com/pion/stun/v3         ← 0016
+github.com/pion/turn/v5         ← 0016
+...</code></pre>
+
+  <h2>3. 신뢰성 옵션 — 데이터 성격이 설정을 정한다</h2>
+  <p>채널을 만들 때 <code>webrtc.DataChannelInit</code>으로 정한다 (<a href="../reference/glossary.html#reliability-options">신뢰성 옵션</a>):</p>
+  <table>
+    <tr><th>옵션</th><th>의미</th><th>기본값</th></tr>
+    <tr><td><code>Ordered</code></td><td>순서 보장 여부</td><td>true</td></tr>
+    <tr><td><code>MaxRetransmits</code></td><td>재전송 횟수 상한</td><td rowspan="2">nil = 무제한 재전송<br>(둘은 상호 배타 — 하나만 지정)</td></tr>
+    <tr><td><code>MaxPacketLifeTime</code></td><td>재전송 유효 시간(ms)</td></tr>
+  </table>
+  <table>
+    <tr><th>보내는 것</th><th>맞는 설정</th><th>왜</th></tr>
+    <tr><td>채팅, 파일 조각, 제어 명령</td><td>기본값 (순서·신뢰)</td><td>하나라도 빠지면 안 됨</td></tr>
+    <tr><td>게임 좌표, 실시간 상태값</td><td><code>Ordered:false, MaxRetransmits:0</code></td><td>늦은 옛 값은 쓰레기 — 최신만 중요</td></tr>
+    <tr><td>라이브 자막·텔레메트리</td><td><code>Ordered:false, MaxPacketLifeTime:n</code></td><td>n ms 안에 못 가면 포기</td></tr>
+  </table>
+  <p>미디어 서버 실무에서 미디어 자체는 SRTP로 가지만, 참가자 메타데이터·컨트롤 메시지·통계 같은 부가 데이터가 DataChannel로 다닌다 — LiveKit이 대표적이다 (0020에서 실코드로 확인).</p>
+
+  <h2>4. 실습 — 암호화된 ping-pong과 옵션 협상</h2>
+  <ol class="steps">
+    <li><code>playground/webrtc-datachannel</code> 디렉토리에서 모듈 초기화 후 pion을 가져온다:
+      <pre><code>go mod init webrtcdc
+go get github.com/pion/webrtc/v4</code></pre>
+      <p class="expect">첫 외부 의존성이다! go.mod에 <code>require github.com/pion/webrtc/v4 v4.2.x</code>가 생기고 §2의 스택이 통째로 딸려온다.</p></li>
+    <li><code>main.go</code> 작성 — <a href="0015-webrtc-big-picture.html">레슨 0015</a>의 "한 프로세스 두 피어" 패턴에 채널 두 개를 얹는다:
+      <pre><code>package main
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/pion/webrtc/v4"
+)
+
+// must는 실습 편의를 위한 헬퍼 — 에러 시 즉시 중단한다.
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+// fmtRetransmits는 *uint16 옵션 값을 출력용 문자열로 바꾼다 (nil = 제한 없음).
+func fmtRetransmits(p *uint16) string {
+	if p == nil {
+		return "제한없음"
+	}
+	return fmt.Sprintf("%d회", *p)
+}
+
+func main() {
+	// 1. 같은 프로세스에 피어 두 개 — 시그널링 서버 없이 SDP를 변수로 직접 전달한다.
+	pc1, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	must(err)
+	pc2, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	must(err)
+	defer pc1.Close()
+	defer pc2.Close()
+
+	done := make(chan struct{})
+
+	// 2. pc1: 기본 채널(신뢰·순서 보장)과 unreliable 채널(순서 X, 재전송 0회)을 만든다.
+	ping, err := pc1.CreateDataChannel("ping", nil)
+	must(err)
+
+	unordered := false
+	var zeroRetx uint16 = 0
+	_, err = pc1.CreateDataChannel("state", &amp;webrtc.DataChannelInit{
+		Ordered:        &amp;unordered, // false = 순서 보장 안 함
+		MaxRetransmits: &amp;zeroRetx,  // 0 = 재전송 안 함 (최신 값만 중요할 때)
+	})
+	must(err)
+
+	// 3. pc2: 상대가 연 채널을 받는다. 협상된 신뢰성 옵션을 그대로 읽을 수 있다.
+	pc2.OnDataChannel(func(dc *webrtc.DataChannel) {
+		fmt.Printf("[pc2] 채널 수신: %-5s (ordered=%v, maxRetransmits=%s)\n",
+			dc.Label(), dc.Ordered(), fmtRetransmits(dc.MaxRetransmits()))
+		if dc.Label() == "ping" {
+			dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+				// ping이 오면 pong으로 되돌려준다.
+				must(dc.SendText(strings.Replace(string(msg.Data), "ping", "pong", 1)))
+			})
+		}
+	})
+
+	// 4. pc1: ping 채널이 열리면 왕복 5회 RTT를 측정한다.
+	var sentAt time.Time
+	round := 1
+	ping.OnMessage(func(msg webrtc.DataChannelMessage) {
+		fmt.Printf("[pc1] %s 수신 (RTT %v)\n", string(msg.Data), time.Since(sentAt).Round(10*time.Microsecond))
+		if round == 5 {
+			close(done)
+			return
+		}
+		round++
+		sentAt = time.Now()
+		must(ping.SendText(fmt.Sprintf("ping %d", round)))
+	})
+	ping.OnOpen(func() {
+		fmt.Println("[pc1] ping 채널 열림 — 왕복 5회 시작")
+		sentAt = time.Now()
+		must(ping.SendText("ping 1"))
+	})
+
+	// 5. 시그널링: offer/answer를 변수로 교환한다 (trickle 대신 gathering 완료 후 한 방에).
+	offer, err := pc1.CreateOffer(nil)
+	must(err)
+	must(pc1.SetLocalDescription(offer))
+	&lt;-webrtc.GatheringCompletePromise(pc1)
+
+	// DTLS 인증서 지문이 SDP에 실려 가는 것을 실물로 확인한다.
+	for _, line := range strings.Split(pc1.LocalDescription().SDP, "\r\n") {
+		if strings.HasPrefix(line, "a=fingerprint") {
+			fmt.Printf("[pc1 SDP] %.60s...\n", line)
+		}
+	}
+
+	must(pc2.SetRemoteDescription(*pc1.LocalDescription()))
+	answer, err := pc2.CreateAnswer(nil)
+	must(err)
+	must(pc2.SetLocalDescription(answer))
+	&lt;-webrtc.GatheringCompletePromise(pc2)
+	must(pc1.SetRemoteDescription(*pc2.LocalDescription()))
+
+	&lt;-done
+	fmt.Println("완료 — DTLS 위에서 암호화된 채널로 5회 왕복")
+}</code></pre></li>
+    <li><code>go vet ./... && go run .</code>
+      <pre><code>[pc1 SDP] a=fingerprint:sha-256 8D:A5:3A:A6:59:23:BA:A4:5D:DA:B3:76:F5...
+[pc2] 채널 수신: ping  (ordered=true, maxRetransmits=제한없음)
+[pc2] 채널 수신: state (ordered=false, maxRetransmits=0회)
+[pc1] ping 채널 열림 — 왕복 5회 시작
+[pc1] pong 1 수신 (RTT 120µs)
+[pc1] pong 2 수신 (RTT 240µs)
+[pc1] pong 3 수신 (RTT 70µs)
+[pc1] pong 4 수신 (RTT 170µs)
+[pc1] pong 5 수신 (RTT 170µs)
+완료 — DTLS 위에서 암호화된 채널로 5회 왕복</code></pre>
+      <p class="expect">읽을 것 세 가지: ① <code>a=fingerprint</code> — DTLS 인증서 지문이 SDP에 실려 가는 실물 (인증서는 PeerConnection마다 새로 생성되니 지문 값은 실행마다 다르다). ② <code>state</code> 채널의 <code>ordered=false, maxRetransmits=0회</code> — pc1이 지정한 옵션이 협상을 거쳐 pc2에서 그대로 읽힌다. ③ RTT 수십~수백 µs — 네트워크가 없는 루프백이라 이 값은 순수하게 DTLS+SCTP 스택 통과 비용이다.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 콜백의 함정 두 가지</h3>
+  <ol class="steps">
+    <li><strong>OnMessage를 늦게 등록하면?</strong> pc2 쪽 <code>dc.OnMessage(...)</code> 등록을 <code>go func(){ time.Sleep(300*time.Millisecond); ... }()</code>로 감싸 300ms 늦추고, pc1은 열리자마자 <code>ping 1</code>, 500ms 뒤 <code>ping 2</code>를 보내게 바꿔 실행:
+      <pre><code>[pc1] 열림 즉시 ping 1 전송
+[pc2] (300ms 뒤에야 OnMessage 등록)
+[pc1] 500ms 뒤 ping 2 전송
+[pc2] 수신: ping 2
+종료 — 수신 로그에 뭐가 찍혔는지 보라</code></pre>
+      <p class="expect"><code>ping 1</code>은 어디에도 없다 — 에러도 없이 <strong>조용히 유실</strong>됐다. pion은 핸들러 등록 전에 도착한 메시지를 버퍼링하지 않는다. 그래서 관례는 "OnDataChannel 콜백 안에서 즉시 OnMessage부터 등록"이다. 확인 후 원상복구.</p></li>
+    <li><strong>닫힌 채널에 Send하면?</strong> 왕복이 끝난 뒤 <code>ping.Close()</code> 하고 <code>SendText</code>를 한 번 더:
+      <pre><code>Send 에러: io: read/write on closed pipe (상태: closed)</code></pre>
+      <p class="expect">panic이 아니라 <strong>error 반환</strong>이다 — 레슨 0003의 (값, error) 관례가 여기서도. Go 채널의 "닫힌 채널 송신 = panic"(0007)과 대비되는 지점이니 헷갈리지 말 것.</p></li>
+  </ol>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0016 복습이다.</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://webrtcforthecurious.com/docs/04-securing/">WebRTC for the Curious — Securing</a> + <a href="https://webrtcforthecurious.com/docs/07-data-communication/">Data Communication</a> (합쳐서 약 20분). Pion 진영이 직접 쓴 책이라 오늘 실습한 API의 설계 의도가 그대로 이어진다.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "왜 SCTP를 새로 구현했지?" 같은 설계 질문 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/datachannel-cheatsheet.html">DataChannel 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0016-ice-nat-traversal.html">레슨 0016</a></p>
+    <p>다음 레슨 예고: <a href="0018-media-rtp-tracks.html">RTP와 Track — 진짜 미디어</a>가 SRTP 위로 흐르기 시작한다.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) ICE candidate 중 srflx(server reflexive)의 의미는?",
+      choices: ["TURN이 중계하는 릴레이 주소", "STUN이 알려준 나의 공인 주소", "내 랜카드에 붙은 로컬 주소", "상대가 추측해서 보낸 예상 주소"],
+      answer: 1,
+      explain: "srflx는 STUN 서버가 '밖에서 보이는 너의 공인 IP:포트'를 알려준 candidate다. 릴레이는 relay(TURN), 로컬은 host."
+    },
+    {
+      q: "SDP의 a=fingerprint 라인이 하는 역할은?",
+      choices: ["SRTP 마스터 키를 직접 전달한다", "ICE candidate 우선순위를 서명한다", "코덱 협상 결과를 무결성 검증한다", "DTLS 인증서의 지문을 미리 공유한다"],
+      answer: 3,
+      explain: "자가서명 인증서를 CA 없이 신뢰하는 방법 — 시그널링으로 지문을 먼저 보내고 DTLS 핸드셰이크의 실물 인증서와 대조한다. 키 자체는 DTLS가 합의한다."
+    },
+    {
+      q: "DataChannel이 TCP·UDP 대신 SCTP를 쓰는 핵심 이유는?",
+      choices: ["스트림별로 신뢰성을 골라 설정 가능", "패킷 크기 제한이 아예 없기 때문에", "브라우저 방화벽을 항상 통과 가능해", "암호화가 프로토콜에 내장되어 있어"],
+      answer: 0,
+      explain: "한 연결에 독립 스트림 여러 개 + 채널마다 ordered/재전송 설정. 암호화는 SCTP가 아니라 그 아래 DTLS의 몫이다."
+    },
+    {
+      q: "실시간 게임 좌표처럼 '최신 값만 중요'한 데이터에 맞는 설정은?",
+      choices: ["Ordered:true, 재전송 제한 없음", "Ordered:true, MaxRetransmits:5", "Ordered:false, MaxRetransmits:0", "Ordered:false, 재전송 제한 없음"],
+      answer: 2,
+      explain: "늦게 도착한 옛 좌표는 쓸모없다 — 순서 보장도 재전송도 끄고 항상 최신만 흘려보낸다. 실습의 state 채널이 정확히 이 설정."
+    }
+  ]);
+</script>

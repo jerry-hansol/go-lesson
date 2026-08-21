@@ -1,0 +1,235 @@
+<meta charset="utf-8">
+<title>레슨 0016 — ICE: NAT를 뚫는 법</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0016 · Pion·WebRTC</p>
+  <h1>ICE — NAT를 뚫는 법</h1>
+  <p class="lede">레슨 0015에서 두 피어가 SDP를 교환했다. 그런데 그 패킷은 실제로 <em>어디로</em> 가는가? 인터넷의 대부분은 NAT 뒤에 있다 — 오늘은 WebRTC가 그 벽을 뚫는 프레임워크, ICE를 pion으로 실측한다. 예상 소요: 40–45분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>pion으로 ICE candidate를 실물 관찰하고(host → STUN을 켜면 srflx), 연결 검사(checking→connected)와 선택된 candidate pair를 직접 확인한다 — 그리고 ICE가 시그널링 유실마저 prflx로 살려내는 것을 목격한다.</p>
+  </div>
+
+  <h2>1. 왜 P2P가 그냥 안 되는가</h2>
+  <p>백엔드 서버는 공인 IP(또는 LB) 뒤에서 <em>기다리는</em> 쪽이라 NAT가 문제되지 않는다. P2P는 다르다 — 양쪽 <strong>모두</strong> 사설 IP 뒤에 있고, 서로의 NAT는 "안에서 먼저 나간 적 있는 매핑"으로만 인바운드를 통과시킨다. 그래서 WebRTC는 연결 수립만을 위한 전용 서브시스템을 갖는다: <strong>ICE</strong>(Interactive Connectivity Establishment)다 (<a href="https://webrtcforthecurious.com/docs/03-connecting/">WebRTC for the Curious — Connecting</a>).</p>
+
+  <h2>2. Candidate — "내가 도달 가능할지도 모르는 주소 후보들"</h2>
+  <p>ICE의 재료는 candidate, 즉 자신이 패킷을 받을 수 있을 것 같은 <code>주소:포트</code> 후보다. 양쪽이 후보를 모아 시그널링으로 교환하고, 모든 조합(candidate pair)에 STUN 바인딩 요청을 서로 쏘아 실제로 통하는 pair를 찾는다 — 이것이 연결 검사(connectivity check)고, 그동안 ICE 상태는 <code>checking</code>이다.</p>
+  <table>
+    <tr><th>타입</th><th>정체</th><th>어디서 오나</th></tr>
+    <tr><td><code>host</code></td><td>내 NIC의 주소 그대로</td><td>로컬 인터페이스 열거</td></tr>
+    <tr><td><code>srflx</code></td><td>NAT 밖에서 보이는 내 공인 주소</td><td>STUN 서버의 응답</td></tr>
+    <tr><td><code>prflx</code></td><td>연결 검사 도중 <em>역발견</em>된 상대 주소</td><td>수신된 검사 패킷의 출발지</td></tr>
+    <tr><td><code>relay</code></td><td>중계 서버의 주소 (최후의 수단)</td><td>TURN 서버 할당</td></tr>
+  </table>
+
+  <h2>3. STUN vs TURN, 그리고 trickle</h2>
+  <ul>
+    <li><strong>STUN</strong>은 거울이다 — "밖에서 너는 이렇게 보여"라고 공인 <code>주소:포트</code>를 알려줄 뿐, 트래픽을 나르지 않는다. 운영 비용이 거의 없다.</li>
+    <li><strong>TURN</strong>은 릴레이다 — 양쪽 NAT 타입이 호환되지 않아 직결이 불가능할 때 미디어가 <em>서버를 경유</em>한다. 스트림 대역폭 전체가 서버 비용이 된다 — 미디어 서비스에서 TURN 비율은 곧 인프라 비용이다.</li>
+    <li><strong>trickle ICE</strong>: 수집이 다 끝나길 기다리지 않고 candidate가 <em>모이는 대로</em> 상대에게 흘려보내 연결 시간을 줄인다. 아래 실습의 <code>OnICECandidate</code> → <code>AddICECandidate</code> 중계가 정확히 그것이다.</li>
+  </ul>
+
+  <h2>4. 실습 — candidate 실물 관찰과 연결 검사</h2>
+  <p>레슨 0008의 레이아웃대로 한 모듈에 프로그램 두 개를 둔다. pion은 v4를 쓴다 (이 레슨의 실측: v4.2.18).</p>
+  <ol class="steps">
+    <li>모듈 준비:
+      <pre><code>mkdir -p ~/Desktop/repo/learn-go/playground/webrtc-ice
+cd ~/Desktop/repo/learn-go/playground/webrtc-ice
+go mod init webrtcice
+go get github.com/pion/webrtc/v4</code></pre></li>
+    <li><code>gather/main.go</code> — candidate 관찰기:
+      <pre><code>package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/pion/webrtc/v4"
+)
+
+// useStun을 true로 바꾸면 STUN 서버가 알려준 srflx candidate가 추가로 나온다 (3단계).
+const useStun = false
+
+// must는 예제 축약용 — 실무 코드라면 error를 반환한다 (레슨 0003).
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func main() {
+	config := webrtc.Configuration{}
+	if useStun {
+		config.ICEServers = []webrtc.ICEServer{
+			{URLs: []string{"stun:stun.l.google.com:19302"}},
+		}
+	}
+
+	pc, err := webrtc.NewPeerConnection(config)
+	must(err)
+	defer pc.Close()
+
+	// candidate가 하나 모일 때마다 호출된다 — trickle ICE의 재료
+	pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c == nil { // nil = 수집 종료 신호
+			fmt.Println("수집 완료")
+			return
+		}
+		fmt.Printf("candidate: typ=%-6s proto=%s %s:%d\n", c.Typ, c.Protocol, c.Address, c.Port)
+	})
+
+	// 협상할 것이 있어야 수집이 시작된다 — 데이터 채널 하나 추가
+	_, err = pc.CreateDataChannel("probe", nil)
+	must(err)
+
+	offer, err := pc.CreateOffer(nil)
+	must(err)
+	must(pc.SetLocalDescription(offer)) // SetLocalDescription이 ICE 수집의 방아쇠
+
+	time.Sleep(3 * time.Second)
+}</code></pre>
+      <p class="expect"><code>go run ./gather</code> 실측 (주소 일부는 가렸다):<br>
+      <code>candidate: typ=host   proto=udp 192.168.1.78:56687</code><br>
+      <code>candidate: typ=host   proto=udp 2001:…:1ee8:52932</code> (IPv6 ×2)<br>
+      <code>candidate: typ=host   proto=udp 192.168.254.16:50319</code><br>
+      <code>수집 완료</code> — ICE 서버가 없으니 전부 host다.</p></li>
+    <li><code>useStun = true</code>로 바꾸고 다시 실행:
+      <p class="expect">실측: host 4개에 이어 <code>candidate: typ=srflx  proto=udp 64.180.…:50873</code> — STUN이 알려준 <strong>공인 IPv4</strong>가 srflx로 등장한다. 사내망 등에서 UDP가 막혀 있으면 srflx가 안 나올 수 있는데, 그 부재 자체가 "이 네트워크는 STUN 불가"라는 진단 신호다.</p></li>
+    <li><code>connect/main.go</code> — 두 피어를 한 프로세스에서 연결하고 상태 전이를 관찰:
+      <pre><code>package main
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/pion/webrtc/v4"
+)
+
+// oneWay를 true로 바꾸면 pc2→pc1 방향 candidate 전달을 끊는다 (부숴보기 a).
+const oneWay = false
+
+// must는 예제 축약용 — 실무 코드라면 error를 반환한다 (레슨 0003).
+func must(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func main() {
+	pc1, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	must(err)
+	defer pc1.Close()
+	pc2, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	must(err)
+	defer pc2.Close()
+
+	// trickle ICE: 모이는 candidate를 즉시 상대에게 전달 (실전에선 시그널링 서버가 중계)
+	pc1.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c != nil {
+			must(pc2.AddICECandidate(c.ToJSON()))
+		}
+	})
+	pc2.OnICECandidate(func(c *webrtc.ICECandidate) {
+		if c != nil &amp;&amp; !oneWay {
+			must(pc1.AddICECandidate(c.ToJSON()))
+		}
+	})
+
+	pc1.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) { fmt.Println("pc1 ICE:", s) })
+	pc2.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) { fmt.Println("pc2 ICE:", s) })
+
+	dc, err := pc1.CreateDataChannel("probe", nil)
+	must(err)
+	done := make(chan struct{})
+	dc.OnOpen(func() {
+		fmt.Println("데이터 채널 열림 — 연결 성립")
+		close(done)
+	})
+
+	// offer/answer 교환 (레슨 0015) — SetLocalDescription 시점부터 수집·trickle 시작
+	offer, err := pc1.CreateOffer(nil)
+	must(err)
+	must(pc1.SetLocalDescription(offer))
+	must(pc2.SetRemoteDescription(offer))
+	answer, err := pc2.CreateAnswer(nil)
+	must(err)
+	must(pc2.SetLocalDescription(answer))
+	must(pc1.SetRemoteDescription(answer))
+
+	select {
+	case &lt;-done:
+		printSelectedPair("pc1", pc1)
+		printSelectedPair("pc2", pc2)
+	case &lt;-time.After(10 * time.Second):
+		fmt.Println("10초 안에 연결 실패 — ICE 상태를 보라")
+	}
+}
+
+// printSelectedPair는 실제 통신에 선택된 candidate pair의 타입을 보여준다.
+func printSelectedPair(name string, pc *webrtc.PeerConnection) {
+	pair, err := pc.SCTP().Transport().ICETransport().GetSelectedCandidatePair()
+	if err != nil || pair == nil {
+		return
+	}
+	fmt.Printf("%s 선택된 pair: local=%s ↔ remote=%s\n", name, pair.Local.Typ, pair.Remote.Typ)
+}</code></pre>
+      <p class="expect"><code>go run ./connect</code> 실측 (2회 연속 동일):<br>
+      <code>pc1 ICE: checking</code> → <code>pc2 ICE: checking</code> → 양쪽 <code>connected</code> → <code>데이터 채널 열림 — 연결 성립</code><br>
+      <code>pc1 선택된 pair: local=host ↔ remote=host</code> — 같은 머신이니 host끼리 붙는 게 정상이다.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 그런데 ICE는 잘 안 부서진다</h3>
+  <ol class="steps">
+    <li><code>oneWay = true</code>로 바꿔 pc2→pc1 candidate 전달을 끊고 실행:
+      <p class="expect">부서질 것 같지만 — 실측: <strong>연결이 성립한다.</strong> <code>pc1 선택된 pair: local=host ↔ remote=prflx</code>. pc1은 pc2의 candidate를 하나도 못 받았지만, pc2가 보낸 연결 검사 패킷의 <em>출발지 주소</em>에서 상대를 역발견해 prflx candidate를 만들었다 (<a href="https://webrtcforthecurious.com/docs/03-connecting/">원전의 Peer Reflexive 설명</a>). 단, 이건 검사 패킷이 물리적으로 도달 가능했기 때문 — 대칭 NAT 너머 실전에서는 양방향 교환과 TURN 폴백이 여전히 필수다. 확인 후 원상복구.</p></li>
+    <li>STUN 주소를 <code>stun:no-such-host.invalid:19302</code>로 바꿔 <code>gather</code> 실행:
+      <p class="expect">실측: 에러도 panic도 없이 host candidate만 나오고 <code>수집 완료</code>. <strong>STUN 실패는 조용하다</strong> — srflx가 안 보이면 오타·차단부터 의심하라. 삼켜진 에러는 pion 로거로 발굴한다:<br>
+      <code>PION_LOG_DEBUG=all go run ./gather</code> → <code>ice DEBUG: gather.go:861: Failed to resolve STUN host: … no such host</code> (실측). 확인 후 원상복구.</p></li>
+  </ol>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0015 복습이다.</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://webrtcforthecurious.com/docs/03-connecting/">WebRTC for the Curious — Connecting</a> (약 25분). NAT 매핑의 4분류부터 candidate pair 검사, TURN이 필요한 조건까지 — 오늘 실측한 모든 것의 프로토콜 차원 설명이다. Pion 구현자들이 쓴 책이라 pion과 용어가 정확히 일치한다.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> 특히 srflx가 안 나오는 네트워크라면 — 그 환경 자체가 좋은 질문거리입니다.</p>
+    <p>참고 문서: <a href="../reference/ice-cheatsheet.html">ICE 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0015-webrtc-big-picture.html">레슨 0015</a> · 다음: <a href="0017-datachannel-and-security.html">레슨 0017</a></p>
+    <p>다음 레슨 예고: DataChannel과 보안 계층 — DTLS 핸드셰이크 위의 SCTP, 신뢰성 옵션.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) offer/answer 교환에서 answer를 만드는 쪽은?",
+      choices: ["offer를 보낸 쪽이 만든다", "offer를 받은 쪽이 만든다", "시그널링 서버가 만든다", "양쪽이 하나씩 다 만든다"],
+      answer: 1,
+      explain: "offer를 받은 쪽이 SetRemoteDescription 후 CreateAnswer로 응답한다. 시그널링 서버는 전달만 할 뿐 내용을 만들지 않는다."
+    },
+    {
+      q: "STUN 서버를 통해 알아낸 '내 공인 주소' candidate의 타입은?",
+      choices: ["typ=host", "typ=relay", "typ=prflx", "typ=srflx"],
+      answer: 3,
+      explain: "server-reflexive(srflx) — STUN 거울에 비친 내 공인 주소:포트다. relay는 TURN 할당 주소, prflx는 검사 중 역발견된 주소."
+    },
+    {
+      q: "TURN이 STUN과 결정적으로 다른 점은?",
+      choices: ["미디어가 서버를 경유한다", "공인 주소만 알려준다", "SDP를 대신 교환해준다", "DNS 조회를 대신해준다"],
+      answer: 0,
+      explain: "STUN은 주소만 알려주는 거울, TURN은 트래픽 전체를 나르는 릴레이다. 그래서 TURN 사용률이 곧 인프라 비용이 된다."
+    },
+    {
+      q: "(실측) 존재하지 않는 STUN 주소를 설정하면 pion은?",
+      choices: ["즉시 panic으로 죽는다", "수집이 멈추고 타임아웃", "조용히 host만으로 진행", "빈 candidate가 생성된다"],
+      answer: 2,
+      explain: "에러 없이 host candidate만으로 수집을 마친다. 삼켜진 원인은 PION_LOG_DEBUG=all로 확인할 수 있다."
+    }
+  ]);
+</script>

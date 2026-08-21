@@ -1,0 +1,52 @@
+<meta charset="utf-8">
+<title>ICE 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>ICE 치트시트 — candidate, STUN/TURN, pion 설정</h1>
+  <p class="lede">출처: <a href="https://webrtcforthecurious.com/docs/03-connecting/">WebRTC for the Curious — Connecting</a>, <a href="https://pkg.go.dev/github.com/pion/webrtc/v4">pion/webrtc v4</a>. 실측 기준: v4.2.18.</p>
+
+  <h2>candidate 4종</h2>
+  <table>
+    <tr><th>타입</th><th>정체</th><th>어디서 오나</th><th>비용</th></tr>
+    <tr><td><code>host</code></td><td>NIC 주소 그대로</td><td>로컬 인터페이스 열거</td><td>0 — 같은 망이면 최선</td></tr>
+    <tr><td><code>srflx</code></td><td>NAT 밖에서 보이는 공인 주소</td><td>STUN 응답</td><td>거의 0 (조회만)</td></tr>
+    <tr><td><code>prflx</code></td><td>연결 검사 중 역발견된 상대 주소</td><td>수신 검사 패킷의 출발지</td><td>0 (부산물)</td></tr>
+    <tr><td><code>relay</code></td><td>중계 서버 주소</td><td>TURN 할당</td><td><strong>미디어 대역폭 전체</strong></td></tr>
+  </table>
+
+  <h2>ICE 연결 상태 전이 (실측 경로)</h2>
+  <p><code>new → checking → connected (→ completed) → closed</code>, 실패·유실 시 <code>disconnected / failed</code>. pion에서는 <code>OnICEConnectionStateChange</code>로 관찰한다.</p>
+
+  <h2>pion 설정 골격</h2>
+  <pre><code>config := webrtc.Configuration{
+	ICEServers: []webrtc.ICEServer{
+		{URLs: []string{"stun:stun.l.google.com:19302"}},
+		// TURN은 자격 증명 필요:
+		// {URLs: []string{"turn:turn.example.com:3478"}, Username: "u", Credential: "p"},
+	},
+}
+
+// trickle 중계 (시그널링 서버가 하는 일)
+pc.OnICECandidate(func(c *webrtc.ICECandidate) {
+	if c != nil {
+		// c.ToJSON()을 상대에게 전달 → 상대는 AddICECandidate
+	}
+})
+
+// 진단: 실제 선택된 pair 확인
+pair, _ := pc.SCTP().Transport().ICETransport().GetSelectedCandidatePair()</code></pre>
+
+  <h2>함정과 진단 (전부 실측)</h2>
+  <table>
+    <tr><th>증상</th><th>원인/도구</th></tr>
+    <tr><td>srflx가 안 나온다</td><td>STUN 주소 오타·UDP 차단 — <strong>에러 없이 조용히</strong> host만 나온다. <code>PION_LOG_DEBUG=all</code>로 <code>Failed to resolve STUN host</code> 류를 발굴</td></tr>
+    <tr><td>candidate를 한 방향만 전달했는데 연결됨</td><td>정상 — 검사 패킷 출발지에서 prflx 역발견. 단, 대칭 NAT 실전에서는 양방향 교환+TURN 폴백 필수</td></tr>
+    <tr><td>checking에서 오래 머묾</td><td>trickle 미사용(수집 완료 대기) 또는 검사 패킷이 도달 불가 — TURN 검토</td></tr>
+    <tr><td>연결은 되는데 비용 급증</td><td>relay pair 비율 확인 — <code>GetSelectedCandidatePair</code>로 집계</td></tr>
+  </table>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0016-ice-nat-traversal.html">레슨 0016</a></p>
+  </footer>
+</main>

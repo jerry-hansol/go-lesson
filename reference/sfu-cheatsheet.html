@@ -1,0 +1,66 @@
+<meta charset="utf-8">
+<title>SFU 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>SFU 치트시트</h1>
+  <p class="lede">1:N 미디어 배포 아키텍처와 pion 포워딩 골격. 출처: <a href="https://webrtcforthecurious.com/docs/08-applied-webrtc/">WebRTC for the Curious — Applied WebRTC</a>, <a href="https://github.com/pion/webrtc/tree/master/examples/broadcast">pion broadcast 예제</a>.</p>
+
+  <h2>아키텍처 선택</h2>
+  <table>
+    <tr><th></th><th>Full Mesh</th><th>SFU</th><th>MCU</th></tr>
+    <tr><td>업로드/인</td><td>N−1개</td><td>1개</td><td>1개</td></tr>
+    <tr><td>다운로드/인</td><td>N−1개</td><td>N−1개</td><td>1개 (합성 화면)</td></tr>
+    <tr><td>서버</td><td>없음</td><td>패킷 전달만 (CPU 저렴)</td><td>디코딩+합성+재인코딩 (CPU 비쌈)</td></tr>
+    <tr><td>쓰는 곳</td><td>1:1 통화</td><td>LiveKit, mediamtx, 대부분의 회의·방송</td><td>레거시 회의, 녹화 합성</td></tr>
+  </table>
+
+  <h2>pion 포워딩 골격</h2>
+  <pre><code>// 인그레스: 발행자 트랙 수신 → 이그레스 트랙들에 복제
+sfuIn.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+    for {
+        pkt, _, err := remote.ReadRTP()
+        if err != nil {
+            return // 발행자 이탈 → EOF. 구독자 정리는 SFU의 책임
+        }
+        for _, out := range outputs { // 구독자별 TrackLocalStaticRTP
+            _ = out.WriteRTP(pkt)
+        }
+    }
+})
+
+// 이그레스 sender마다 RTCP 소비 고루틴 — 반드시
+sender, _ := pcOut.AddTrack(localTrack)
+go func() {
+    for {
+        if _, _, err := sender.ReadRTCP(); err != nil {
+            return
+        }
+    }
+}()</code></pre>
+  <ul>
+    <li><strong>TrackLocalStaticRTP의 "Static"</strong>: seq·timestamp는 그대로 통과, SSRC·PT는 연결별 협상값으로 자동 재작성.</li>
+    <li>구독자(클라이언트)당 PeerConnection 1개 — 미니어처든 LiveKit이든 같다.</li>
+  </ul>
+
+  <h2>RTCP 피드백 (SFU가 다루는 것)</h2>
+  <table>
+    <tr><th>패킷</th><th>방향</th><th>뜻</th></tr>
+    <tr><td>PLI</td><td>구독자→SFU→발행자</td><td>키프레임 요청 — 새 구독자 합류·화면 깨짐 복구</td></tr>
+    <tr><td>NACK</td><td>구독자→SFU</td><td>잃어버린 seq 재전송 요청 (인터셉터가 자동 처리)</td></tr>
+    <tr><td>ReceiverReport</td><td>수신측→송신측</td><td>손실률·지터 통계 — 품질 판단 근거</td></tr>
+  </table>
+
+  <h2>사고 대응표 (전부 실측)</h2>
+  <table>
+    <tr><th>증상</th><th>원인</th><th>처방</th></tr>
+    <tr><td>단기간 무증상, 장기 운영에서 손실 복구·통계 죽음</td><td>sender RTCP를 아무도 안 읽음</td><td>sender마다 RTCP 소비 고루틴 (조용한 버그 — 데모에선 안 보인다)</td></tr>
+    <tr><td>SFU ReadRTP가 <code>EOF</code></td><td>발행자 PC Close/이탈</td><td>정상 신호 — 구독자에게 해체를 <strong>전파</strong>하는 건 SFU 책임</td></tr>
+    <tr><td>구독자 초반 몇 패킷 유실</td><td>파이프 준비 전 도착</td><td>정상 (RTP는 손실 허용) — 화면 복구는 PLI로</td></tr>
+    <tr><td>구독자마다 SSRC가 다름</td><td>연결별 SSRC 협상·재작성</td><td>버그 아님 — seq·timestamp 통과 여부로 복제를 판단</td></tr>
+  </table>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="rtp-track-cheatsheet.html">RTP·Track</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0019-sfu-broadcast.html">레슨 0019</a></p>
+  </footer>
+</main>

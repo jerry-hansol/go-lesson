@@ -12,6 +12,12 @@
 - [pkg.go.dev](https://pkg.go.dev/) — 표준 라이브러리·서드파티 패키지 문서. Use for: API 시그니처와 예제 확인.
 - [Go Playground](https://go.dev/play/) — 브라우저 실행 환경. Use for: 설치 없이 코드 조각 실험·공유.
 
+### WebRTC (Pion·WebRTC 아크 원전)
+
+- [WebRTC for the Curious](https://webrtcforthecurious.com/) — WebRTC 구현자들(Pion 진영)이 쓴 오픈소스 책, 13개 챕터. Use for: 시그널링/ICE/보안/RTP 등 프로토콜 지식의 1차 원전. 아크 0015~0020의 챕터별 원전.
+- [pion/webrtc v4 API 문서](https://pkg.go.dev/github.com/pion/webrtc/v4) — Use for: PeerConnection/Track/DataChannel API 시그니처 확인.
+- [pion/webrtc examples](https://github.com/pion/webrtc) — 리포 내 examples/ 디렉토리. Use for: play-from-disk, broadcast 등 공식 예제 코드 리딩.
+
 ### 미션 도메인 (미디어 서버 코드베이스 — 학습의 목적지)
 
 - [pion/webrtc](https://github.com/pion/webrtc) — 순수 Go WebRTC 구현. Use for: 중급 이후 실전 코드 읽기 대상. [awesome-pion](https://github.com/pion/awesome-pion)에 활용 사례 목록.

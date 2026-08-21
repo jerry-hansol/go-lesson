@@ -1,0 +1,68 @@
+<meta charset="utf-8">
+<title>DataChannel 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>DataChannel 치트시트 — DTLS·SCTP·신뢰성 옵션</h1>
+  <p class="lede">출처: <a href="https://webrtcforthecurious.com/docs/04-securing/">WebRTC for the Curious — Securing</a>, <a href="https://webrtcforthecurious.com/docs/07-data-communication/">Data Communication</a>. pion/webrtc v4 기준.</p>
+
+  <h2>계층 지도</h2>
+  <pre><code>┌───────────────┬────────────────┐
+│  DataChannel  │  미디어(Track)  │
+├───────────────┼────────────────┤
+│     SCTP      │      SRTP      │
+├───────────────┴────────────────┤
+│     DTLS  (암호화·키 합의)       │   신뢰의 뿌리 = 시그널링으로 교환한
+├────────────────────────────────┤   SDP의 a=fingerprint (자가서명 인증서 지문)
+│     ICE   (경로 찾기)           │
+└────────────────────────────────┘
+              UDP</code></pre>
+
+  <h2>신뢰성 옵션 (webrtc.DataChannelInit)</h2>
+  <table>
+    <tr><th>옵션</th><th>타입</th><th>의미</th></tr>
+    <tr><td><code>Ordered</code></td><td><code>*bool</code></td><td>순서 보장 (기본 true)</td></tr>
+    <tr><td><code>MaxRetransmits</code></td><td><code>*uint16</code></td><td>재전송 횟수 상한 — <code>MaxPacketLifeTime</code>과 상호 배타</td></tr>
+    <tr><td><code>MaxPacketLifeTime</code></td><td><code>*uint16</code></td><td>재전송 유효 시간(ms) — 하나만 지정</td></tr>
+  </table>
+  <table>
+    <tr><th>용도</th><th>설정</th></tr>
+    <tr><td>채팅·파일·제어 명령</td><td>기본값 (nil) — 신뢰·순서 보장</td></tr>
+    <tr><td>게임 좌표·실시간 상태</td><td><code>Ordered:false, MaxRetransmits:0</code></td></tr>
+    <tr><td>자막·텔레메트리 (시한부)</td><td><code>Ordered:false, MaxPacketLifeTime:n</code></td></tr>
+  </table>
+
+  <h2>콜백 골격 (pion v4)</h2>
+  <pre><code>// 여는 쪽
+dc, err := pc.CreateDataChannel("label", nil) // 옵션은 &webrtc.DataChannelInit{...}
+dc.OnOpen(func() { dc.SendText("hi") })
+dc.OnMessage(func(msg webrtc.DataChannelMessage) { ... })
+
+// 받는 쪽 — OnMessage는 콜백 안에서 '즉시' 등록 (늦으면 그 전 도착분 유실)
+pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+    dc.OnMessage(func(msg webrtc.DataChannelMessage) { ... })
+    // 협상된 옵션 확인: dc.Ordered(), dc.MaxRetransmits()
+})</code></pre>
+
+  <h2>시그널링 골격 (한 프로세스 두 피어)</h2>
+  <pre><code>offer, _ := pc1.CreateOffer(nil)
+pc1.SetLocalDescription(offer)
+&lt;-webrtc.GatheringCompletePromise(pc1)   // candidate 수집 완료까지 대기
+pc2.SetRemoteDescription(*pc1.LocalDescription())
+answer, _ := pc2.CreateAnswer(nil)
+pc2.SetLocalDescription(answer)
+&lt;-webrtc.GatheringCompletePromise(pc2)
+pc1.SetRemoteDescription(*pc2.LocalDescription())</code></pre>
+
+  <h2>흔한 사고</h2>
+  <table>
+    <tr><th>증상</th><th>원인</th><th>실측 메시지</th></tr>
+    <tr><td>초반 메시지가 사라짐</td><td>OnMessage 등록이 도착보다 늦음 (버퍼링 없음)</td><td>에러 없음 — 조용한 유실</td></tr>
+    <tr><td>닫힌 채널에 Send</td><td>ReadyState가 closed</td><td><code>io: read/write on closed pipe</code> (error 반환, panic 아님)</td></tr>
+    <tr><td>옵션 무시됨</td><td>MaxRetransmits와 MaxPacketLifeTime 동시 지정</td><td>하나만 지정해야 한다</td></tr>
+  </table>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="glossary.html">용어집</a> · <a href="ice-cheatsheet.html">ICE</a> · <a href="rtp-track-cheatsheet.html">RTP·Track</a> · 첫 등장: <a href="../lessons/0017-datachannel-and-security.html">레슨 0017</a></p>
+  </footer>
+</main>

@@ -1,0 +1,117 @@
+<meta charset="utf-8">
+<title>레슨 0020 — 실전의 pion</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0020 · Pion·WebRTC</p>
+  <h1>실전의 pion — mediamtx·LiveKit 해부</h1>
+  <p class="lede">Pion·WebRTC 아크의 피날레. 0015~0019에서 배운 프로토콜 지식을 들고, pion을 가장 크게 쓰는 두 실코드를 연다. 이 투어는 mediamtx 커밋 <code>9934156</code>(2026-08-19, 레슨 0014와 동일)과 livekit 커밋 <code>6a64df2</code>(2026-08-20) 기준 — 구조는 바뀔 수 있다. 예상 소요: 60분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>pion 생태계의 모듈 지도를 그리고, mediamtx의 WHIP 처리와 LiveKit SFU에서 pion이 쓰이는 지점을 <strong>실제 파일:줄로</strong> 짚을 수 있다 — 회사 pion 코드베이스를 열 준비 완료.</p>
+  </div>
+
+  <h2>1. pion 생태계 지도 — webrtc는 파사드일 뿐</h2>
+  <p><code>pion/webrtc</code>는 상위 파사드고, 프로토콜 계층마다 독립 Go 모듈이 있다. <a href="https://github.com/pion">pion org</a>에서 실측한 주요 모듈(2026-08-20 기준):</p>
+  <table>
+    <tr><th>모듈</th><th>담당</th><th>배운 레슨</th></tr>
+    <tr><td><code>pion/webrtc</code> (16.7k★)</td><td>브라우저 WebRTC API의 Go 구현 — 아래 전부를 조립</td><td>0015</td></tr>
+    <tr><td><code>pion/ice</code> · <code>stun</code> · <code>turn</code></td><td>NAT 순회, candidate 수집·페어링</td><td>0016</td></tr>
+    <tr><td><code>pion/dtls</code> · <code>srtp</code> · <code>sctp</code> · <code>datachannel</code></td><td>보안 핸드셰이크, 미디어 암호화, 데이터 채널</td><td>0017</td></tr>
+    <tr><td><code>pion/rtp</code> · <code>rtcp</code> · <code>sdp</code></td><td>패킷 직렬화·피드백·세션 기술</td><td>0015·0018</td></tr>
+    <tr><td><code>pion/interceptor</code></td><td>RTP/RTCP 미들웨어 체인 (아래 §2)</td><td>이번</td></tr>
+  </table>
+  <p>이 구조가 실코드에서 어떻게 보이나 — mediamtx <code>go.mod</code> 실물: 직접 의존이 <code>webrtc/v4 v4.2.18</code>, <code>ice/v4</code>, <code>interceptor</code>, <code>rtp</code>, <code>rtcp</code>, <code>sdp/v3</code>이고, <code>dtls/v3</code>·<code>srtp/v3</code>·<code>sctp</code>·<code>stun/v3</code>·<code>turn/v5</code>는 <code>// indirect</code>로 딸려 온다. 파사드만 부르면 프로토콜 가족 전체가 조립되는 것이다.</p>
+
+  <h2>2. interceptor — RTP/RTCP의 미들웨어 체인</h2>
+  <p><a href="https://github.com/pion/interceptor">pion/interceptor</a>는 "Pluggable RTP/RTCP processors" — HTTP 미들웨어처럼 패킷 경로에 끼어드는 체인이다. NACK 재전송, 수신 리포트 생성 같은 RTCP 자동화가 전부 interceptor로 구현되어 PeerConnection에 꽂힌다.</p>
+  <p>mediamtx는 커스텀 interceptor를 직접 만든다. <code>internal/protocols/webrtc/stats_interceptor.go:19</code>:</p>
+  <pre><code>func (s *statsInterceptor) BindRTCPReader(reader interceptor.RTCPReader) interceptor.RTCPReader {
+	return interceptor.RTCPReaderFunc(func(bytes []byte,
+		attributes interceptor.Attributes,
+	) (int, interceptor.Attributes, error) {</code></pre>
+  <p>낯익지 않은가 — <a href="0006-interfaces.html">레슨 0006</a>의 암묵적 인터페이스 구현과 <code>http.HandlerFunc</code>(<a href="0010-http-server.html">0010</a>) 스타일의 함수 어댑터가 그대로다. 등록은 <code>peer_connection.go:324</code>의 <code>interceptorRegistry := &amp;interceptor.Registry{}</code>에 꽂는 방식이다.</p>
+
+  <h2>3. mediamtx 속 pion — WHIP: 시그널링 공백을 HTTP로 메운 표준</h2>
+  <p>0015에서 배웠듯 WebRTC 표준은 시그널링 방법을 정하지 않는다. 그 공백을 스트리밍 서비스용으로 메운 것이 <strong>WHIP</strong>(WebRTC-HTTP Ingestion Protocol, <a href="https://www.rfc-editor.org/rfc/rfc9725">RFC 9725</a>, 2025) — offer를 HTTP POST 바디로 보내고 answer를 응답으로 받는, 사실상 "시그널링의 REST화"다. WHEP은 같은 모델의 재생(egress) 방향이다.</p>
+  <p>mediamtx의 구현 실물 — <code>internal/servers/webrtc/http_server.go</code>:</p>
+  <pre><code>// :39 — 라우팅은 정규식으로
+reWHIPWHEPNoID = regexp.MustCompile("^/(.+?)/(whip|whep)$")
+
+// :194 — offer가 HTTP POST 바디로 들어온다
+func (s *httpServer) onWHIPPost(ctx *gin.Context, pathName string, publish bool) {
+	contentType := httpp.ParseContentType(ctx.Request.Header.Get("Content-Type"))
+	if contentType != "application/sdp" { ... }
+	offer, err := io.ReadAll(&amp;customLimitReader{ctx.Request.Body, maxInboundSDPSize})</code></pre>
+  <p>offer는 세션으로 넘어가 <code>internal/protocols/webrtc/peer_connection.go:725</code>에서 0015의 3박자가 그대로 나온다:</p>
+  <pre><code>err := co.wr.SetRemoteDescription(*offer)   // :725
+tmp, err := co.wr.CreateAnswer(nil)          // :730
+err = co.wr.SetLocalDescription(*answer)     // :739</code></pre>
+  <p>재미있는 디테일: <code>http_server.go:386</code> 주석은 아직 <code>RFC draft-ietf-whip-09</code>를 가리킨다 — RFC 9725로 승격되기 전 초안 번호다. <a href="../reference/code-reading-playbook.html">0014 플레이북</a>의 교훈 그대로, 코드 주석은 낡는다.</p>
+
+  <h2>4. LiveKit 속 pion — replace로 포크를 태우는 SFU</h2>
+  <p>livekit <code>go.mod</code>에는 pion 스위트가 직접 의존으로 있고, 그 아래 이런 줄이 있다 (<code>go.mod:166~170</code> 실물):</p>
+  <pre><code>replace github.com/pion/webrtc/v4 =&gt; github.com/livekit/webrtc-pion/v4 v4.2.18-warp.1
+replace github.com/pion/dtls/v3   =&gt; github.com/livekit/dtls/v3        v3.1.5-warp.1
+replace github.com/pion/ice/v4    =&gt; github.com/livekit/ice/v4         v4.4.0-warp.1</code></pre>
+  <p><code>replace</code>는 go.mod 심화 문법(<a href="0008-packages-and-layout.html">0008</a>의 연장)으로, "이 모듈을 부르면 실제로는 저걸 써라"는 치환 지시다. LiveKit은 pion 코어 3종을 <code>-warp.N</code> 버전의 자체 포크로 바꿔 태운다. 이유를 밝힌 문서는 포크 리포에 없지만, 커밋 이력에는 자체 기능 패치(예: multi-track ogg writing API 추가)가 올라가 있다 — upstream 반영을 기다리지 않고 패치를 선탑재하는 구조로 읽힌다.</p>
+  <p>SFU 코어에서 0019의 포워딩이 어떤 모습인지 — <code>pkg/sfu/downtrack.go:249</code> 주석 실물:</p>
+  <pre><code>// DownTrack implements webrtc.TrackLocal, is the track used to write packets
+// to SFU Subscriber, the track handle the packets for simple, simulcast
+// and SVC Publisher.</code></pre>
+  <p>구독자에게 나가는 트랙이 pion의 <code>webrtc.TrackLocal</code> 인터페이스를 <strong>암묵 구현</strong>한 커스텀 타입이다 (<code>Bind :447</code>, <code>WriteRTP :1025</code>). 0006에서 배운 그 메커니즘이 SFU의 심장이고, 레이어 선택은 <code>pkg/sfu/forwarder.go:353</code>의 <code>Forwarder.DetermineCodec(codec webrtc.RTPCodecCapability, ...)</code> 같은 지점에서 pion 타입을 직접 받는다.</p>
+
+  <h2>5. 추적 연습 과제 (답은 없다 — 직접)</h2>
+  <div class="box">
+    <p class="box-title">과제: WHIP publish가 들어오면 PeerConnection은 어디서 태어나는가</p>
+    <p>시작점: <code>internal/servers/webrtc/http_server.go:194</code>의 <code>onWHIPPost</code> → <code>newSessionReq</code>. 이어서 <code>grep -n "PeerConnection{" internal/servers/webrtc/session.go</code>.</p>
+    <p>함정 하나를 심어뒀다: session.go의 import는 <code>pwebrtc "github.com/pion/webrtc/v4"</code>이고, 맨몸 <code>webrtc</code>는 mediamtx 자체 래퍼(<code>internal/protocols/webrtc</code>)다. <code>:368</code>의 <code>&amp;webrtc.PeerConnection{...}</code>이 pion인지 래퍼인지, 진짜 pion 생성(<code>api.NewPeerConnection</code>)은 어느 파일 어느 줄인지 — import 별칭 확인(플레이북 ①·③)으로 끝까지 추적해 보라.</p>
+  </div>
+
+  <h2>6. 아크 졸업 — 이제 회사 코드다</h2>
+  <p>여기까지 왔으면 준비는 끝났다. 회사 pion 코드베이스를 열 때: <a href="../reference/code-reading-playbook.html">코드 리딩 플레이북</a>으로 진입점·지도·인터페이스 경계를 잡고, <a href="../reference/pion-ecosystem-cheatsheet.html">pion 생태계 치트시트</a>로 어느 모듈 계층의 코드인지 위치를 찍어라. 그다음은 위즈덤 구간이다 — 작은 PR 하나, 그리고 막히면 <a href="https://go.dev/wiki/Questions">커뮤니티</a>(pion은 Discord도 활발하다).</p>
+
+  <h2>7. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>Q1은 레슨 0019 복습이다.</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://webrtcforthecurious.com/docs/08-applied-webrtc/">WebRTC for the Curious — Applied WebRTC</a> (실전 적용 사례, 약 20분) + <a href="https://www.rfc-editor.org/rfc/rfc9725">RFC 9725 (WHIP)</a>는 1~3절만. 표준 문서를 처음부터 끝까지 읽는 게 아니라 필요한 절만 찾아 읽는 것도 실무 기술이다.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> 추적 과제의 경로를 확인받고 싶을 때도요.</p>
+    <p>참고 문서: <a href="../reference/pion-ecosystem-cheatsheet.html">pion 생태계 치트시트</a> · <a href="../reference/code-reading-playbook.html">코드 리딩 플레이북</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0019-sfu-broadcast.html">레슨 0019</a></p>
+    <p>Pion·WebRTC 아크 완주. 다음 아크는 실전 경험 보고 — 회사 코드에서 부딪힌 것 — 를 바탕으로 설계된다.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) SFU가 참가자가 늘어도 버티는 핵심 이유는?",
+      choices: ["모든 스트림을 하나로 합성해 준다", "재인코딩 없이 RTP를 중계만 한다", "참가자끼리 P2P로 직접 연결한다", "코덱을 더 가벼운 것으로 바꾼다"],
+      answer: 1,
+      explain: "SFU는 받은 RTP를 디코딩·재인코딩 없이 선별 전달만 한다. 합성(재인코딩)은 MCU고, 전원 P2P는 mesh — 대역폭이 인원 제곱으로 는다."
+    },
+    {
+      q: "pion/webrtc와 pion/ice·dtls·rtp들의 관계는?",
+      choices: ["전부 하나의 저장소 안 패키지다", "옛 버전과 새 버전의 관계다", "파사드와 프로토콜별 모듈이다", "경쟁하는 별개 구현체들이다"],
+      answer: 2,
+      explain: "webrtc는 상위 파사드고 프로토콜 계층마다 독립 모듈이 있다. mediamtx go.mod에서 파사드는 직접, 나머지는 indirect로 딸려 오는 걸 확인했다."
+    },
+    {
+      q: "WHIP(RFC 9725)이 표준화한 것은?",
+      choices: ["offer를 HTTP POST로 보내는 시그널링", "RTP 패킷의 새로운 암호화 방식", "SFU 간 미디어를 중계하는 규격", "코덱 협상의 우선순위 결정 규칙"],
+      answer: 0,
+      explain: "WebRTC 표준이 비워둔 시그널링을, 스트리밍 ingest 용도로 'application/sdp POST → answer 응답' 한 방으로 정한 것이 WHIP이다."
+    },
+    {
+      q: "go.mod의 replace 지시자가 하는 일은?",
+      choices: ["의존성의 최신 버전을 강제한다", "모듈을 지정한 다른 모듈로 치환한다", "간접 의존성을 직접 의존으로 승격", "빌드에서 해당 모듈을 제외시킨다"],
+      answer: 1,
+      explain: "이 모듈 경로를 요구하면 실제로는 저 모듈(포크·로컬 경로 등)을 쓰라는 치환. LiveKit이 pion 3종을 -warp 포크로 바꿔 태우는 데 쓴다."
+    }
+  ]);
+</script>

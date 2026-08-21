@@ -1,0 +1,180 @@
+<meta charset="utf-8">
+<title>레슨 0018 — RTP와 Track</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Lesson 0018 · Pion·WebRTC</p>
+  <h1>RTP와 Track — 진짜 미디어가 흐르는 길</h1>
+  <p class="lede">시그널링(0015)·ICE(0016)·DTLS(0017)는 전부 준비 운동이었다. 오늘은 그 위로 실제 영상이 흐르는 프로토콜 RTP를 패킷 단위로 실측하고, pion의 Track API로 보내고 받는다. 미디어 서버 엔지니어에게 가장 실무 직결인 레슨. 예상 소요: 45분.</p>
+
+  <div class="box win">
+    <p class="box-title">오늘의 목표 (하나만)</p>
+    <p>RTP 패킷의 <strong>SSRC / sequence number / timestamp</strong>를 내 코드로 수신해 실측으로 읽고, 각 필드가 어떤 문제(유실 감지·재정렬·립싱크)를 푸는지 설명할 수 있다.</p>
+  </div>
+
+  <h2>1. RTP 패킷 해부 — 필드마다 푸는 문제가 있다</h2>
+  <p>RTP(Real-time Transport Protocol)는 UDP 위에서 미디어를 나르는 얇은 헤더다. TCP처럼 "다 도착함"을 보장하는 대신, <em>수신 쪽이 스스로 복구할 수 있는 단서</em>를 헤더에 싣는다 (<a href="https://webrtcforthecurious.com/docs/05-real-time-networking/">WebRTC for the Curious — Real-time Networking</a>):</p>
+  <table>
+    <tr><th>필드</th><th>푸는 문제</th><th>동작</th></tr>
+    <tr><td><strong>SSRC</strong> (32bit)</td><td>이 패킷이 어느 스트림 것인가</td><td>트랙(소스)마다 무작위 고유값 — 한 연결에 카메라+화면공유가 섞여도 구분된다</td></tr>
+    <tr><td><strong>sequence number</strong> (16bit)</td><td>유실 감지·재정렬</td><td>패킷마다 +1. 구멍이 나면 유실, 순서가 뒤집히면 재정렬</td></tr>
+    <tr><td><strong>timestamp</strong> (32bit)</td><td>재생 타이밍·립싱크</td><td>미디어 클럭 틱. 비디오는 90kHz — 30fps면 프레임당 +3000</td></tr>
+    <tr><td><strong>payload type</strong> (7bit)</td><td>내용물이 어떤 코덱인가</td><td>SDP의 rtpmap이 정한 번호 (§2)</td></tr>
+  </table>
+  <p>sequence number와 timestamp의 <strong>시작값은 난수</strong>다 (RFC 3550의 보안 요구 — 암호화 공격 표면 축소). 그래서 절대값이 아니라 <em>증가폭(Δ)</em>을 읽는 것이 습관이 되어야 한다 — 실습에서 직접 확인한다.</p>
+  <p>RTCP는 RTP의 쌍둥이 제어 채널이다: 수신 품질 보고(SR/RR)와 재전송·키프레임 요청(NACK/PLI)이 여기로 다닌다. 이름만 기억해 두자 — PLI는 다음 레슨(SFU)의 주인공이다.</p>
+
+  <h2>2. 코덱 협상 — payload type은 SDP가 정한 번호표</h2>
+  <p>payload type 96번이 VP8이라는 법은 없다. 동적 범위(96~127)의 번호는 <strong>SDP의 <code>a=rtpmap</code> 라인이 연결마다 새로 계약</strong>한다. pion 오퍼에서 실측한 원문:</p>
+  <pre><code>m=video 9 UDP/TLS/RTP/SAVPF 96 97 102 103 ...   ← 이 m= 라인이 제안하는 번호들
+a=rtpmap:96 VP8/90000                            ← 96번 = VP8, 클럭 90kHz
+a=rtpmap:102 H264/90000                          ← 102번 = H264
+a=rtpmap:97 rtx/90000                            ← 97번 = 96번의 재전송 전용 짝</code></pre>
+  <p>pion에서 이 목록을 채우는 것이 <a href="https://pkg.go.dev/github.com/pion/webrtc/v4#MediaEngine.RegisterDefaultCodecs">MediaEngine.RegisterDefaultCodecs</a>다 — <code>webrtc.NewPeerConnection</code>(패키지 기본)은 이걸 이미 호출한 상태라 VP8/H264/Opus가 다 들어 있다. 양쪽에 공통 코덱이 없으면? 부숴보기 (b)에서 어떤 에러가 어디서 터지는지 실측한다.</p>
+
+  <h2>3. pion Track API — 보내는 쪽과 받는 쪽</h2>
+  <table>
+    <tr><th></th><th>타입</th><th>쓰는 곳</th></tr>
+    <tr><td>보내기</td><td><a href="https://pkg.go.dev/github.com/pion/webrtc/v4#TrackLocalStaticSample">TrackLocalStaticSample</a></td><td>인코딩된 <strong>프레임</strong>을 주면 pion이 RTP 패킷화(seq·ts 계산)까지 해준다 — 대부분의 앱</td></tr>
+    <tr><td>보내기(저수준)</td><td><a href="https://pkg.go.dev/github.com/pion/webrtc/v4#TrackLocalStaticRTP">TrackLocalStaticRTP</a></td><td>이미 RTP인 것을 그대로 흘린다 — SFU 포워딩(다음 레슨), RTSP 중계</td></tr>
+    <tr><td>받기</td><td><a href="https://pkg.go.dev/github.com/pion/webrtc/v4#TrackRemote">TrackRemote</a></td><td><code>ReadRTP()</code>로 패킷 단위 수신. <a href="https://pkg.go.dev/github.com/pion/webrtc/v4#PeerConnection.OnTrack">OnTrack</a> 콜백의 인자로 온다</td></tr>
+  </table>
+  <ul>
+    <li>송신 트랙은 <strong>반드시 offer 생성 전에 <code>AddTrack</code></strong> — 그래야 m= 라인에 실린다. 협상 후에 추가하면? 부숴보기 (a).</li>
+    <li><code>OnTrack</code>은 협상 완료 시점이 아니라 <strong>첫 RTP 패킷이 도착했을 때</strong> 불린다 — "연결됐는데 OnTrack이 안 와요"의 절반은 상대가 아직 안 보내고 있는 것이다.</li>
+    <li>레슨 0006의 인터페이스가 여기서 실전이 된다: <code>TrackLocal</code>은 인터페이스고 StaticSample/StaticRTP는 그 구현체다.</li>
+  </ul>
+
+  <h2>4. 실습 — RTP 필드를 내 눈으로</h2>
+  <p>한 프로세스에 피어 두 개를 만들어(0015 패턴) pc1이 30fps 합성 프레임을 VP8 트랙으로 보내고, pc2가 RTP 필드를 로깅한다. 브라우저 없이 완전 검증된다.</p>
+  <ol class="steps">
+    <li><code>playground/webrtc-media</code>를 만들고 <code>go mod init webrtcmedia</code> 후 pion 설치:
+      <pre><code>go get github.com/pion/webrtc/v4</code></pre>
+      <p class="expect">이 레슨의 실측은 v4.2.18 기준이다.</p></li>
+    <li><code>main.go</code> 작성 — 먼저 시그널링 교환 함수 <code>exchange</code>. <a href="0015-webrtc-big-picture.html">레슨 0015</a>에서 배운 offer/answer 4단계를 non-trickle 패턴 그대로 함수로 묶은 것으로, 이 아크의 실습 공용 뼈대다:
+      <pre><code>func exchange(pc1, pc2 *webrtc.PeerConnection) error {
+	offer, err := pc1.CreateOffer(nil)
+	if err != nil {
+		return fmt.Errorf("offer 생성: %w", err)
+	}
+	gather1 := webrtc.GatheringCompletePromise(pc1)
+	if err := pc1.SetLocalDescription(offer); err != nil {
+		return fmt.Errorf("pc1 local 설정: %w", err)
+	}
+	&lt;-gather1 // non-trickle: candidate 수집 완료를 기다린다 (레슨 0016)
+
+	if err := pc2.SetRemoteDescription(*pc1.LocalDescription()); err != nil {
+		return fmt.Errorf("pc2 remote 설정: %w", err)
+	}
+	answer, err := pc2.CreateAnswer(nil)
+	if err != nil {
+		return fmt.Errorf("answer 생성: %w", err)
+	}
+	gather2 := webrtc.GatheringCompletePromise(pc2)
+	if err := pc2.SetLocalDescription(answer); err != nil {
+		return fmt.Errorf("pc2 local 설정: %w", err)
+	}
+	&lt;-gather2
+
+	if err := pc1.SetRemoteDescription(*pc2.LocalDescription()); err != nil {
+		return fmt.Errorf("pc1 remote 설정: %w", err)
+	}
+	return nil
+}</code></pre>
+      이어서 핵심부:
+      <pre><code>// 보내는 쪽: VP8 샘플 트랙 — 반드시 offer 생성 전에 추가해야 m= 라인에 실린다.
+track, _ := webrtc.NewTrackLocalStaticSample(
+	webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "camera-sim")
+pc1.AddTrack(track)
+
+// 받는 쪽: 첫 RTP 패킷이 도착하면 OnTrack이 불린다.
+pc2.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+	fmt.Printf("OnTrack: 코덱=%s SSRC=%d\n", remote.Codec().MimeType, remote.SSRC())
+	var prevSeq uint16
+	var prevTS uint32
+	for i := 0; i &lt; 8; i++ {
+		pkt, _, err := remote.ReadRTP()
+		if err != nil {
+			break
+		}
+		fmt.Printf("pkt#%d  seq=%d (Δ%+d) ts=%d (Δ%+d)\n", i+1,
+			pkt.SequenceNumber, int(pkt.SequenceNumber-prevSeq),
+			pkt.Timestamp, int32(pkt.Timestamp-prevTS))
+		prevSeq, prevTS = pkt.SequenceNumber, pkt.Timestamp
+	}
+	close(done)
+})
+
+// 30fps 가정의 합성 프레임: 1/30초 → 90kHz 클럭에서 3000 틱.
+frame := make([]byte, 120) // MTU보다 작아서 프레임 하나 = RTP 패킷 하나
+for range ticker.C { // time.NewTicker(time.Second / 30)
+	track.WriteSample(media.Sample{Data: frame, Duration: time.Second / 30})
+}</code></pre></li>
+    <li><code>go run .</code>
+      <p class="expect">예상 (실측): 연결 후 —</p>
+      <pre><code>OnTrack: 코덱=video/VP8 SSRC=2921267525
+pkt#1  seq=26765 ts=3536606981 (시작값은 난수)
+pkt#2  seq=26766 (Δ+1) ts=3536609980 (Δ+2999)
+pkt#3  seq=26767 (Δ+1) ts=3536612980 (Δ+3000)
+pkt#4  seq=26768 (Δ+1) ts=3536615980 (Δ+3000)
+...
+검증 완료 — 패킷 8개 수신</code></pre>
+      <p class="expect">§1의 이론이 그대로 보인다: seq는 정확히 +1씩, timestamp는 프레임당 +3000(90000÷30). 시작값 둘 다 난수. 첫 Δ만 +2999인 것은 <code>time.Second/30</code>이 나노초로 절단(33,333,333ns)되면서 생기는 반올림 흔적 — 실측이 아니면 못 보는 디테일이다.</p></li>
+  </ol>
+
+  <h3>부숴보기 — 미디어가 안 나올 때의 두 가지 진범</h3>
+  <ol class="steps">
+    <li><strong>협상이 끝난 뒤에 AddTrack</strong> — 데이터 채널로 연결만 성립시킨 뒤 트랙을 추가하고 재협상 없이 3초간 전송해 보자:
+      <p class="expect">예상 (실측): <code>3초간 90프레임 전송 시도 — WriteSample 에러: 0건, pc2 OnTrack 호출: 0회</code> — 보내는 쪽은 <strong>에러조차 없다</strong>. 트랙이 어떤 m= 라인에도 묶이지 않아 WriteSample이 조용히 허공에 버려진다. 협상 후 추가한 트랙은 offer/answer를 다시 교환(재협상)해야 흐른다. 실무 "영상이 안 나와요" 1순위 용의자.</p></li>
+    <li><strong>공통 코덱 없음</strong> — pc2를 H264만 등록한 <code>MediaEngine</code>으로 만들고(<code>webrtc.NewAPI(webrtc.WithMediaEngine(m))</code>) VP8 트랙을 협상해 보자:
+      <p class="expect">예상 (실측): offer→answer까지는 통과하고, 마지막 <code>pc1.SetRemoteDescription(answer)</code>에서 — <code>unable to start track, codec is not supported by remote</code>. 에러가 <em>보내는 쪽의 answer 적용 시점</em>에 터진다는 것이 포인트: 로그에서 이 문구를 보면 코덱 협상 불일치부터 의심하자.</p></li>
+  </ol>
+
+  <div class="box">
+    <p class="box-title">다음 확장 (선택)</p>
+    <p>합성 프레임 대신 진짜 영상을 브라우저로 쏘고 싶다면 pion 공식 예제 <a href="https://github.com/pion/webrtc/tree/master/examples/play-from-disk">play-from-disk</a> — IVF 파일을 TrackLocalStaticSample로 읽어 브라우저에 재생한다. 오늘 배운 코드와 구조가 같아서 바로 읽힌다.</p>
+  </div>
+
+  <h2>5. 퀴즈 — 기억에서 꺼내기</h2>
+  <p>본문을 다시 보지 말고. 첫 문제는 레슨 0017 복습이다 (간격 반복).</p>
+  <div id="quiz"></div>
+
+  <div class="box">
+    <p class="box-title">오늘의 원전 (Primary Source)</p>
+    <p><a href="https://webrtcforthecurious.com/docs/05-real-time-networking/">WebRTC for the Curious — Real-time Networking</a> (15분): RTP/RTCP가 왜 이렇게 생겼는지. 이어서 <a href="https://webrtcforthecurious.com/docs/06-media-communication/">Media Communication</a> (15분): 코덱·유실 복구·립싱크. Pion 진영이 직접 쓴 책이라 오늘 코드와 용어가 1:1로 맞는다.</p>
+  </div>
+
+  <footer class="lesson-footer">
+    <p><strong>막히면 언제든 저에게 물어보세요.</strong> "우리 서비스 로그의 이 RTP 통계는 무슨 뜻인가" 같은 실전 질문 환영입니다.</p>
+    <p>참고 문서: <a href="../reference/rtp-track-cheatsheet.html">RTP·Track 치트시트</a> · <a href="../reference/glossary.html">용어집</a> · 이전: <a href="0017-datachannel-and-security.html">레슨 0017</a></p>
+    <p>다음 레슨 예고: <a href="0019-sfu-broadcast.html">SFU</a> — 오늘 배운 RTP를 1:N으로 중계하는 방송의 구조. TrackLocalStaticRTP와 PLI가 주인공이다.</p>
+  </footer>
+</main>
+<script src="../assets/quiz.js"></script>
+<script>
+  renderQuiz("quiz", [
+    {
+      q: "(복습) DataChannel에서 재전송을 포기하고 최신성만 챙길 때 조정하는 것은?",
+      choices: ["ordered와 maxRetransmits", "SSRC와 payload type 번호", "iceServers 목록의 정렬 순서", "SCTP 포트 번호와 MTU 크기"],
+      answer: 0,
+      explain: "ordered: false + maxRetransmits: 0이 '순서·재전송 포기, 최신 데이터 우선' 조합이다 — 게임 좌표, 실시간 텔레메트리용."
+    },
+    {
+      q: "비디오 표준 클럭 90kHz에서 30fps 프레임 간 timestamp 증가폭은?",
+      choices: ["300 틱씩 증가한다", "1500 틱씩 증가한다", "3000 틱씩 증가한다", "9000 틱씩 증가한다"],
+      answer: 2,
+      explain: "90000 ÷ 30 = 3000. 실습 실측에서도 프레임당 Δ+3000이었다. fps가 바뀌면 이 폭으로 역산할 수 있다."
+    },
+    {
+      q: "패킷 유실을 감지하는 단서가 되는 RTP 필드는?",
+      choices: ["timestamp 필드", "sequence number 필드", "SSRC 식별자 필드", "payload type 필드"],
+      answer: 1,
+      explain: "seq는 패킷마다 +1이라 구멍이 곧 유실이다. timestamp는 재생 타이밍, SSRC는 스트림 구분, payload type은 코덱 식별."
+    },
+    {
+      q: "연결은 됐는데 OnTrack이 영영 안 불린다 — 가장 흔한 원인은?",
+      choices: ["클럭레이트가 90kHz라서다", "패킷이 MTU보다 작아서다", "수신 고루틴이 모자라서다", "재협상 없이 트랙만 추가했다"],
+      answer: 3,
+      explain: "협상 후 AddTrack한 트랙은 m= 라인에 없어서 WriteSample이 에러도 없이 버려진다. offer/answer 재교환(재협상)이 필요하다."
+    }
+  ]);
+</script>

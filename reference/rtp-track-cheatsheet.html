@@ -1,0 +1,61 @@
+<meta charset="utf-8">
+<title>RTP·Track 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>RTP·Track 치트시트</h1>
+  <p class="lede">RTP 헤더 읽는 법과 pion v4 Track API 골격. 출처: <a href="https://webrtcforthecurious.com/docs/05-real-time-networking/">WebRTC for the Curious ch.5</a>·<a href="https://webrtcforthecurious.com/docs/06-media-communication/">ch.6</a>, <a href="https://pkg.go.dev/github.com/pion/webrtc/v4">pion/webrtc v4</a>.</p>
+
+  <h2>RTP 헤더 필드</h2>
+  <table>
+    <tr><th>필드</th><th>크기</th><th>푸는 문제</th><th>읽는 법</th></tr>
+    <tr><td>SSRC</td><td>32bit</td><td>스트림(소스) 구분</td><td>트랙마다 무작위 고유값 — 절대값 자체가 ID</td></tr>
+    <tr><td>sequence number</td><td>16bit</td><td>유실 감지·재정렬</td><td>Δ+1이 정상. 구멍 = 유실. 시작값 난수, 65535 다음은 0 (랩어라운드)</td></tr>
+    <tr><td>timestamp</td><td>32bit</td><td>재생 타이밍·립싱크</td><td>미디어 클럭 틱. 시작값 난수 — 절대값 말고 Δ를 본다</td></tr>
+    <tr><td>payload type</td><td>7bit</td><td>코덱 식별</td><td>SDP <code>a=rtpmap</code>이 연결마다 계약한 번호 (동적: 96~127)</td></tr>
+  </table>
+  <p>RTCP: 품질 피드백 채널 — SR/RR(수신 리포트), NACK(재전송 요청), PLI(키프레임 요청, SFU 필수).</p>
+
+  <h2>90kHz 클럭 계산표 (비디오)</h2>
+  <table>
+    <tr><th>fps</th><th>프레임당 Δtimestamp</th></tr>
+    <tr><td>24</td><td>3750</td></tr>
+    <tr><td>25</td><td>3600</td></tr>
+    <tr><td>30</td><td>3000</td></tr>
+    <tr><td>60</td><td>1500</td></tr>
+  </table>
+  <p>역산: Δts에서 fps를 추정할 수 있다 (90000 ÷ Δts). 오디오(Opus)는 48kHz 클럭 — 20ms 프레임당 960.</p>
+
+  <h2>보내기 — Track API 선택</h2>
+  <table>
+    <tr><th>타입</th><th>입력 단위</th><th>seq·ts 계산</th><th>용도</th></tr>
+    <tr><td><code>TrackLocalStaticSample</code></td><td>인코딩된 프레임 + Duration</td><td>pion이 대신</td><td>파일 재생, 인코더 출력 송신 (대부분)</td></tr>
+    <tr><td><code>TrackLocalStaticRTP</code></td><td>RTP 패킷 그대로</td><td>내가 책임</td><td>SFU 포워딩, RTSP→WebRTC 중계</td></tr>
+  </table>
+  <pre><code>track, _ := webrtc.NewTrackLocalStaticSample(
+    webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8}, "video", "stream-id")
+pc.AddTrack(track)                    // 반드시 offer 생성 전!
+track.WriteSample(media.Sample{Data: frame, Duration: time.Second / 30})</code></pre>
+
+  <h2>받기 — OnTrack 골격</h2>
+  <pre><code>pc.OnTrack(func(remote *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+    // 첫 RTP 패킷이 "도착했을 때" 불린다 (협상 완료 시점 아님)
+    for {
+        pkt, _, err := remote.ReadRTP()   // *rtp.Packet
+        if err != nil { return }           // 트랙 종료 시 에러로 루프 탈출
+        _ = pkt.SSRC; _ = pkt.SequenceNumber; _ = pkt.Timestamp
+    }
+})</code></pre>
+
+  <h2>미디어가 안 나올 때 체크리스트</h2>
+  <ul>
+    <li><strong>AddTrack이 offer 생성 전인가?</strong> 협상 후 추가면 WriteSample이 에러 없이 버려진다 (실측: 90프레임 전송, OnTrack 0회) → 재협상 필요</li>
+    <li><strong>공통 코덱이 있는가?</strong> 없으면 answer 적용 시점에 <code>unable to start track, codec is not supported by remote</code> (실측, pc1의 SetRemoteDescription에서)</li>
+    <li><strong>상대가 실제로 보내고 있는가?</strong> OnTrack은 첫 패킷 도착 트리거 — 협상만 되고 송신이 없으면 영영 안 불린다</li>
+    <li>기본 코덱 목록은 <code>MediaEngine.RegisterDefaultCodecs</code> — <code>webrtc.NewPeerConnection</code>은 이미 포함, 커스텀 <code>NewAPI(WithMediaEngine(m))</code>은 직접 등록</li>
+  </ul>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="glossary.html">용어집</a> · <a href="sfu-cheatsheet.html">SFU 치트시트</a> · 첫 등장: <a href="../lessons/0018-media-rtp-tracks.html">레슨 0018</a></p>
+  </footer>
+</main>

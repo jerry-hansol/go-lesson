@@ -243,6 +243,105 @@
     <dt id="interface-embedding">인터페이스 임베딩 (interface embedding)</dt>
     <dd>인터페이스 정의 안에 다른 인터페이스 이름을 쓰면 그 메서드 셋을 통째로 포함한다 — Java 인터페이스의 <code>extends</code>에 대응. 예: mediamtx의 <code>Publisher</code>는 <code>Source</code>를 임베딩한다.
       <span class="src">— <a href="../lessons/0014-reading-mediamtx.html">레슨 0014</a></span></dd>
+    <dt id="signaling">시그널링 (signaling)</dt>
+    <dd>두 피어가 SDP를 주고받는 절차. WebRTC 표준이 <strong>의도적으로 정하지 않은</strong> 유일한 층 — HTTP, WebSocket, 무엇이든 애플리케이션 몫이다. 실습에서는 한 프로세스 안에서 변수로 전달해 대체했다.
+      <span class="src">— <a href="../lessons/0015-webrtc-big-picture.html">레슨 0015</a></span></dd>
+
+    <dt id="sdp">SDP (Session Description Protocol)</dt>
+    <dd>"나는 이런 통신을 할 수 있다"는 자기소개서 텍스트. <code>m=</code> 라인이 미디어/데이터 섹션을 선언하고 <code>a=</code> 라인들이 속성(fingerprint, ice-ufrag, candidate)을 붙인다. 줄바꿈은 <code>\r\n</code>.
+      <span class="src">— <a href="../lessons/0015-webrtc-big-picture.html">레슨 0015</a></span></dd>
+
+    <dt id="offer-answer">offer / answer 모델</dt>
+    <dd>제안자가 offer를, 응답자가 answer를 만들어 각자 <code>SetLocalDescription</code>·<code>SetRemoteDescription</code>으로 등록하는 4단계 협상. 순서를 어기면 <code>InvalidStateError</code> — answer는 remote offer 없이는 만들 수조차 없다.
+      <span class="src">— <a href="../lessons/0015-webrtc-big-picture.html">레슨 0015</a></span></dd>
+
+    <dt id="pc-states">PeerConnection 상태 머신</dt>
+    <dd>SignalingState(SDP 교환 진행), ICEConnectionState(경로 탐색), PeerConnectionState(종합 판정) 세 개가 독립적으로 돈다. 실무 판정 신호는 PeerConnectionState의 <code>connected</code> — signaling <code>stable</code>은 서류 접수 완료일 뿐이다.
+      <span class="src">— <a href="../lessons/0015-webrtc-big-picture.html">레슨 0015</a></span></dd>
+
+    <dt id="ice">ICE (Interactive Connectivity Establishment)</dt>
+    <dd>NAT 뒤의 두 피어가 통할 수 있는 경로를 찾는 프레임워크. 양쪽이 candidate를 모아 교환하고, 모든 pair에 연결 검사(STUN 바인딩)를 쏘아 통하는 조합을 선택한다. 상태는 checking → connected로 전이.
+      <span class="src">— <a href="../lessons/0016-ice-nat-traversal.html">레슨 0016</a></span></dd>
+
+    <dt id="stun">STUN</dt>
+    <dd>"밖에서 너는 이렇게 보여"라고 공인 주소:포트를 알려주는 거울 서버. 트래픽을 나르지 않아 비용이 거의 없다. pion 설정 오타 시 에러 없이 조용히 무시되므로 srflx 부재로 진단한다.
+      <span class="src">— <a href="../lessons/0016-ice-nat-traversal.html">레슨 0016</a></span></dd>
+
+    <dt id="turn">TURN</dt>
+    <dd>직결이 불가능한 NAT 조합에서 미디어 전체를 중계하는 릴레이 서버 — 최후의 수단. 스트림 대역폭이 곧 서버 비용이라, relay pair 비율이 미디어 서비스의 인프라 비용 지표가 된다.
+      <span class="src">— <a href="../lessons/0016-ice-nat-traversal.html">레슨 0016</a></span></dd>
+
+    <dt id="candidate">ICE candidate (host/srflx/prflx/relay)</dt>
+    <dd>자신이 도달 가능할지 모르는 주소:포트 후보. host=NIC 주소, srflx=STUN이 알려준 공인 주소, prflx=연결 검사 패킷의 출발지에서 역발견된 주소, relay=TURN 할당 주소.
+      <span class="src">— <a href="../lessons/0016-ice-nat-traversal.html">레슨 0016</a></span></dd>
+
+    <dt id="trickle">trickle ICE</dt>
+    <dd>candidate 수집 완료를 기다리지 않고 모이는 대로 상대에게 흘려보내 연결 시간을 줄이는 방식. pion에서는 OnICECandidate로 받아 상대의 AddICECandidate에 넣는 중계로 구현된다.
+      <span class="src">— <a href="../lessons/0016-ice-nat-traversal.html">레슨 0016</a></span></dd>
+
+    <dt id="dtls">DTLS</dt>
+    <dd>TLS의 UDP판. WebRTC의 모든 트래픽(데이터·미디어)이 이 핸드셰이크로 합의한 키 위에서 암호화된다 — 암호화 없는 모드는 없다. 자가서명 인증서를 SDP의 <code>a=fingerprint</code>(지문)와 대조해 신뢰하므로, 신뢰의 뿌리는 시그널링 채널이다.
+      <span class="src">— <a href="../lessons/0017-datachannel-and-security.html">레슨 0017</a></span></dd>
+
+    <dt id="srtp">SRTP</dt>
+    <dd>미디어(RTP)를 암호화하는 프로토콜. 키는 DTLS 핸드셰이크에서 유도한다(DTLS-SRTP). 데이터는 SCTP로, 미디어는 SRTP로 — 같은 DTLS 위에서 갈라진다.
+      <span class="src">— <a href="../lessons/0017-datachannel-and-security.html">레슨 0017</a></span></dd>
+
+    <dt id="datachannel-sctp">DataChannel (SCTP)</dt>
+    <dd>임의의 바이트를 P2P로 보내는 채널. TCP도 UDP도 아닌 SCTP를 DTLS 위에 태운 것 — 한 연결에 독립 스트림 여러 개, 스트림마다 신뢰성 설정 가능. pion에선 <code>CreateDataChannel</code>/<code>OnDataChannel</code>과 OnOpen/OnMessage 콜백으로 다룬다.
+      <span class="src">— <a href="../lessons/0017-datachannel-and-security.html">레슨 0017</a></span></dd>
+
+    <dt id="reliability-options">신뢰성 옵션 (Ordered/MaxRetransmits/MaxPacketLifeTime)</dt>
+    <dd>DataChannel별 전송 보장 설정. 채팅·파일은 기본(신뢰·순서), 게임 좌표·실시간 상태는 <code>Ordered:false, MaxRetransmits:0</code>(최신 값만), 시한부 데이터는 <code>MaxPacketLifeTime</code>. 뒤의 둘은 상호 배타.
+      <span class="src">— <a href="../lessons/0017-datachannel-and-security.html">레슨 0017</a></span></dd>
+
+    <dt id="rtp">RTP (Real-time Transport Protocol)</dt>
+    <dd>UDP 위에서 미디어를 나르는 프로토콜. 전달을 보장하는 대신 수신 쪽이 스스로 복구할 단서(SSRC·seq·timestamp·payload type)를 헤더에 싣는다.
+      <span class="src">— <a href="../lessons/0018-media-rtp-tracks.html">레슨 0018</a></span></dd>
+
+    <dt id="rtcp">RTCP</dt>
+    <dd>RTP의 쌍둥이 제어 채널. 수신 품질 보고(SR/RR)와 재전송·키프레임 요청(NACK/PLI)이 다닌다. PLI는 SFU가 새 시청자에게 첫 화면을 주기 위해 필수.
+      <span class="src">— <a href="../lessons/0018-media-rtp-tracks.html">레슨 0018</a></span></dd>
+
+    <dt id="ssrc-seq-ts">SSRC / sequence number / timestamp</dt>
+    <dd>RTP 헤더의 3대 필드 — 스트림 구분(SSRC), 유실 감지·재정렬(seq, 패킷당 +1), 재생 타이밍·립싱크(timestamp, 비디오 90kHz 클럭). seq와 timestamp의 시작값은 보안상 난수라 절대값이 아닌 Δ를 읽는다.
+      <span class="src">— <a href="../lessons/0018-media-rtp-tracks.html">레슨 0018</a></span></dd>
+
+    <dt id="track-local-remote">TrackLocal / TrackRemote</dt>
+    <dd>pion의 미디어 송신/수신 API. 보내기는 TrackLocalStaticSample(프레임을 주면 RTP 패킷화까지 pion이)과 TrackLocalStaticRTP(RTP 그대로 — SFU 포워딩용), 받기는 OnTrack 콜백의 TrackRemote에서 ReadRTP(). OnTrack은 협상 완료가 아니라 첫 RTP 패킷 도착 시 불린다.
+      <span class="src">— <a href="../lessons/0018-media-rtp-tracks.html">레슨 0018</a></span></dd>
+
+    <dt id="rtpmap">코덱 협상 (a=rtpmap)</dt>
+    <dd>동적 payload type 번호(96~127)를 코덱에 매핑하는 SDP 라인 — <code>a=rtpmap:96 VP8/90000</code>. 연결마다 새로 계약하며, pion은 MediaEngine.RegisterDefaultCodecs가 기본 목록을 채운다. 공통 코덱이 없으면 answer 적용 시점에 협상이 실패한다.
+      <span class="src">— <a href="../lessons/0018-media-rtp-tracks.html">레슨 0018</a></span></dd>
+
+    <dt id="sfu">SFU (Selective Forwarding Unit)</dt>
+    <dd>발행자의 RTP를 디코딩·재인코딩 없이 구독자들에게 선별 전달하는 미디어 서버 모델. 발행자는 한 번만 업로드하고 서버가 팬아웃한다. 클라이언트당 PeerConnection 1개. LiveKit·mediamtx WebRTC의 구조.
+      <span class="src">— <a href="../lessons/0019-sfu-broadcast.html">레슨 0019</a></span></dd>
+
+    <dt id="mesh-mcu">full mesh / MCU</dt>
+    <dd>SFU의 두 대안. mesh는 서버 없이 전원 직접 연결 — 참가자당 업로드 N−1개라 소수 인원 전용. MCU는 서버가 모든 스트림을 디코딩→합성→재인코딩 — 다운로드가 1개로 줄지만 서버 CPU가 비싸고 지연이 붙는다.
+      <span class="src">— <a href="../lessons/0019-sfu-broadcast.html">레슨 0019</a></span></dd>
+
+    <dt id="pli">PLI (Picture Loss Indication)</dt>
+    <dd>"키프레임을 새로 만들어 달라"는 RTCP 피드백. 새 구독자는 키프레임부터 받아야 화면을 그릴 수 있어, SFU가 구독자 합류 시 발행자 쪽으로 보낸다. pion broadcast 예제는 intervalpli 인터셉터로 주기 전송한다.
+      <span class="src">— <a href="../lessons/0019-sfu-broadcast.html">레슨 0019</a></span></dd>
+
+    <dt id="rtp-forwarding">RTP 포워딩 (TrackLocalStaticRTP)</dt>
+    <dd><code>TrackRemote.ReadRTP()</code>로 받은 패킷을 <code>TrackLocalStaticRTP.WriteRTP()</code>로 다른 연결에 흘리는 SFU의 심장. "Static" = seq·timestamp는 통과, SSRC·페이로드 타입은 연결별 협상값으로 자동 재작성.
+      <span class="src">— <a href="../lessons/0019-sfu-broadcast.html">레슨 0019</a></span></dd>
+
+    <dt id="interceptor">interceptor (pion)</dt>
+    <dd>RTP/RTCP 패킷 경로에 끼어드는 플러그인 체인 — HTTP 미들웨어의 미디어판. NACK 재전송·수신 리포트 같은 RTCP 자동화가 전부 이걸로 구현되어 <code>interceptor.Registry</code>에 등록된다. mediamtx는 통계용 커스텀 interceptor를 직접 만든다.
+      <span class="src">— <a href="../lessons/0020-pion-in-the-wild.html">레슨 0020</a></span></dd>
+
+    <dt id="whip-whep">WHIP / WHEP</dt>
+    <dd>WebRTC 표준이 비워둔 시그널링을 스트리밍용으로 메운 HTTP 프로토콜 — offer를 <code>POST</code>(application/sdp)로 보내면 answer가 응답으로 온다. ingest 방향이 WHIP(<a href="https://www.rfc-editor.org/rfc/rfc9725">RFC 9725</a>), 재생 방향이 WHEP. OBS→mediamtx 연결이 이 방식이다.
+      <span class="src">— <a href="../lessons/0020-pion-in-the-wild.html">레슨 0020</a></span></dd>
+
+    <dt id="replace-directive">replace 지시자 (go.mod)</dt>
+    <dd>"이 모듈을 요구하면 실제로는 저걸 써라"는 go.mod의 치환 문법. 포크 선탑재(LiveKit의 <code>livekit/webrtc-pion -warp.N</code>)나 로컬 경로 개발에 쓴다.
+      <span class="src">— <a href="../lessons/0020-pion-in-the-wild.html">레슨 0020</a></span></dd>
   </dl>
 
   <footer class="lesson-footer">

@@ -1,0 +1,59 @@
+<meta charset="utf-8">
+<title>pion 생태계 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>pion 생태계 치트시트</h1>
+  <p class="lede">pion 모듈 지도와 실코드(mediamtx·livekit)의 의존 구조. 출처: <a href="https://github.com/pion">pion org</a>, mediamtx <code>9934156</code>·livekit <code>6a64df2</code> go.mod 실측 (2026-08-20).</p>
+
+  <h2>모듈 지도 — webrtc는 파사드</h2>
+  <pre><code>pion/webrtc (파사드: PeerConnection·Track·DataChannel API)
+├─ 연결   pion/ice ── pion/stun, pion/turn      ← NAT 순회
+├─ 보안   pion/dtls ── pion/srtp                 ← 핸드셰이크·미디어 암호화
+├─ 데이터 pion/sctp ── pion/datachannel          ← DataChannel 전송
+├─ 미디어 pion/rtp, pion/rtcp                    ← 패킷·피드백
+├─ 기술   pion/sdp                               ← offer/answer 본문
+└─ 확장   pion/interceptor                       ← RTP/RTCP 미들웨어 체인</code></pre>
+  <table>
+    <tr><th>모듈</th><th>역할</th><th>레슨</th></tr>
+    <tr><td><code>webrtc/v4</code></td><td>브라우저 WebRTC API 대응 파사드. import는 항상 <code>/v4</code> 명시</td><td>0015</td></tr>
+    <tr><td><code>ice/v4</code>, <code>stun/v3</code>, <code>turn/v5</code></td><td>candidate 수집·페어링, NAT 순회 서버</td><td>0016</td></tr>
+    <tr><td><code>dtls/v3</code>, <code>srtp/v3</code></td><td>키 교환, RTP 암호화</td><td>0017</td></tr>
+    <tr><td><code>sctp</code>, <code>datachannel</code></td><td>DataChannel 신뢰성 계층</td><td>0017</td></tr>
+    <tr><td><code>rtp</code>, <code>rtcp</code>, <code>sdp/v3</code></td><td>패킷 직렬화, 피드백, 세션 기술</td><td>0015·0018</td></tr>
+    <tr><td><code>interceptor</code></td><td>NACK·리포트 등 RTP/RTCP 자동화 플러그인</td><td>0020</td></tr>
+  </table>
+
+  <h2>interceptor 체인 (미들웨어 모델)</h2>
+  <pre><code>[앱 코드] → Registry{ ic1 → ic2 → ic3 } → [네트워크]
+             │NACK 재전송  │수신 리포트  │커스텀(통계 등)
+등록:  reg := &amp;interceptor.Registry{}
+       webrtc.NewAPI(webrtc.WithInterceptorRegistry(reg))
+구현:  BindRTCPReader/BindRTCPWriter 등을 가진 타입 (암묵 구현, ← 레슨 0006)
+실전:  mediamtx internal/protocols/webrtc/stats_interceptor.go</code></pre>
+
+  <h2>WHIP 요청 흐름 (RFC 9725)</h2>
+  <table>
+    <tr><th>단계</th><th>HTTP</th><th>mediamtx 지점</th></tr>
+    <tr><td>publish 시작</td><td><code>POST /{path}/whip</code>, 바디=offer SDP (<code>application/sdp</code>)</td><td><code>http_server.go:194 onWHIPPost</code></td></tr>
+    <tr><td>answer 반환</td><td><code>201 Created</code> + answer SDP</td><td><code>peer_connection.go:725~739</code></td></tr>
+    <tr><td>ICE 갱신</td><td><code>PATCH</code> (trickle)</td><td><code>http_server.go:256 onWHIPPatch</code></td></tr>
+    <tr><td>종료</td><td><code>DELETE</code></td><td><code>http_server.go:321 onWHIPDelete</code></td></tr>
+  </table>
+  <p>WHEP은 같은 모델의 재생(egress) 방향 — mediamtx는 <code>/{path}/whep</code>으로 같은 핸들러 계열에서 처리한다.</p>
+
+  <h2>실코드 의존 구조 (go.mod 실측)</h2>
+  <table>
+    <tr><th></th><th>mediamtx</th><th>livekit</th></tr>
+    <tr><td>파사드</td><td><code>webrtc/v4 v4.2.18</code> 직접</td><td>동일 — 단, <strong>replace로 자체 포크</strong></td></tr>
+    <tr><td>직접 의존</td><td>ice·interceptor·rtcp·rtp·sdp</td><td>pion 스위트 대부분 직접</td></tr>
+    <tr><td>특이점</td><td>커스텀 statsInterceptor, WHIP 자체 구현</td><td><code>webrtc·dtls·ice</code> 3종을 <code>livekit/*-warp.N</code> 포크로 치환</td></tr>
+  </table>
+  <pre><code># go.mod replace 문법 — "왼쪽을 요구하면 실제론 오른쪽을 써라"
+replace github.com/pion/webrtc/v4 =&gt; github.com/livekit/webrtc-pion/v4 v4.2.18-warp.1
+# 용도: 포크 선탑재, 로컬 경로 개발(=&gt; ../mylib), 버전 고정</code></pre>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="code-reading-playbook.html">코드 리딩 플레이북</a> · <a href="glossary.html">용어집</a> · 첫 등장: <a href="../lessons/0020-pion-in-the-wild.html">레슨 0020</a></p>
+  </footer>
+</main>

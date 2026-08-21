@@ -1,0 +1,75 @@
+<meta charset="utf-8">
+<title>WebRTC 개요 치트시트</title>
+<link rel="stylesheet" href="../assets/style.css">
+<main>
+  <p class="kicker">Reference · Cheat Sheet</p>
+  <h1>WebRTC 개요 치트시트 — 스택·SDP·상태 머신·pion 골격</h1>
+  <p class="lede">WebRTC의 뼈대와 pion 최소 코드. 출처: <a href="https://webrtcforthecurious.com/">WebRTC for the Curious</a>, <a href="https://pkg.go.dev/github.com/pion/webrtc/v4">pion/webrtc v4 API</a>. 실측은 v4.2.18 기준.</p>
+
+  <h2>WebRTC 스택 — 무엇이 표준이고 무엇이 아닌가</h2>
+  <table>
+    <tr><th>층</th><th>역할</th><th>표준?</th><th>배우는 레슨</th></tr>
+    <tr><td>시그널링</td><td>SDP를 상대에게 전달</td><td><strong>표준 밖</strong> — 앱 마음</td><td>0015</td></tr>
+    <tr><td>SDP (offer/answer)</td><td>능력 협상 — 무엇을 주고받을지</td><td>표준</td><td>0015</td></tr>
+    <tr><td>ICE (STUN/TURN)</td><td>NAT 너머 경로 찾기</td><td>표준</td><td>0016</td></tr>
+    <tr><td>DTLS</td><td>연결 암호화·인증</td><td>표준</td><td>0017</td></tr>
+    <tr><td>SCTP / SRTP</td><td>데이터 채널 / 미디어 전송</td><td>표준</td><td>0017 / 0018</td></tr>
+  </table>
+
+  <h2>SDP 라인 해독표 (pion 실측 offer)</h2>
+  <pre><code>v=0                              SDP 버전 (항상 0)
+o=- 88142078039991151 ...        origin — 세션 식별자
+s=- / t=0 0                      세션 이름(안 씀) / 유효 시간(무제한)
+a=fingerprint:sha-256 6E:5B:...  DTLS 인증서 지문 (0017)
+m=application 9 UDP/DTLS/SCTP webrtc-datachannel
+                                 미디어 섹션 시작 — 데이터 채널 선언
+a=setup:actpass                  DTLS 역할 협상 (offer는 양쪽 다 가능)
+a=sctp-port:5000                 SCTP 포트 (0017)
+a=ice-ufrag:oHaiUHzV...          ICE 자격 증명 (0016)
+a=candidate:... typ host ...     연결 후보 주소 (0016)</code></pre>
+  <ul>
+    <li>줄바꿈은 <code>\r\n</code>. 트랙을 추가하면 <code>m=video</code>/<code>m=audio</code> 섹션이 늘어난다 (0018).</li>
+  </ul>
+
+  <h2>offer/answer 4단계 호출 순서</h2>
+  <table>
+    <tr><th>순서</th><th>피어</th><th>호출</th><th>어기면</th></tr>
+    <tr><td>①</td><td>제안자</td><td><code>CreateOffer</code> → <code>SetLocalDescription</code></td><td>—</td></tr>
+    <tr><td>②</td><td>응답자</td><td><code>SetRemoteDescription(offer)</code></td><td>③에서 <code>InvalidStateError: remote description is not set</code></td></tr>
+    <tr><td>③</td><td>응답자</td><td><code>CreateAnswer</code> → <code>SetLocalDescription</code></td><td>—</td></tr>
+    <tr><td>④</td><td>제안자</td><td><code>SetRemoteDescription(answer)</code></td><td>제안자 have-local-offer에서 정지, 연결 불성립</td></tr>
+  </table>
+
+  <h2>상태 머신 3개 (독립적으로 돈다)</h2>
+  <table>
+    <tr><th>상태</th><th>흐름</th><th>콜백</th></tr>
+    <tr><td>Signaling</td><td>stable → have-local/remote-offer → stable</td><td><code>OnSignalingStateChange</code></td></tr>
+    <tr><td>ICE</td><td>new → checking → connected / failed</td><td><code>OnICEConnectionStateChange</code></td></tr>
+    <tr><td>Connection</td><td>new → connecting → <strong>connected</strong> / failed / closed</td><td><code>OnConnectionStateChange</code></td></tr>
+  </table>
+  <p>실무 판정은 Connection의 <code>connected</code>. signaling <code>stable</code>은 "서류 접수 완료"일 뿐이다.</p>
+
+  <h2>pion 최소 골격 (한 프로세스 두 피어, non-trickle)</h2>
+  <pre><code>pc, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+// 콜백 등록: OnConnectionStateChange / OnDataChannel / OnTrack(0018)
+
+offer, err := pc.CreateOffer(nil)
+g := webrtc.GatheringCompletePromise(pc)   // non-trickle: 수집 완료 대기
+err = pc.SetLocalDescription(offer)
+&lt;-g
+// pc.LocalDescription()을 상대에게 전달 (시그널링) → 상대의 answer를 SetRemoteDescription</code></pre>
+
+  <h2>브라우저 API ↔ pion 대응</h2>
+  <table>
+    <tr><th>JS</th><th>Go (pion)</th></tr>
+    <tr><td><code>new RTCPeerConnection(cfg)</code></td><td><code>webrtc.NewPeerConnection(webrtc.Configuration{...})</code></td></tr>
+    <tr><td><code>await pc.createOffer()</code></td><td><code>offer, err := pc.CreateOffer(nil)</code></td></tr>
+    <tr><td><code>pc.onconnectionstatechange</code></td><td><code>pc.OnConnectionStateChange(func(s){...})</code></td></tr>
+    <tr><td><code>pc.ondatachannel</code></td><td><code>pc.OnDataChannel(func(d){...})</code></td></tr>
+    <tr><td><code>dc.send("x")</code></td><td><code>dc.SendText("x")</code> / <code>dc.Send([]byte)</code></td></tr>
+  </table>
+
+  <footer class="lesson-footer">
+    <p>관련 문서: <a href="glossary.html">용어집</a> · <a href="concurrency-cheatsheet.html">동시성</a> · 첫 등장: <a href="../lessons/0015-webrtc-big-picture.html">레슨 0015</a></p>
+  </footer>
+</main>
